@@ -1,121 +1,297 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Job Scraper</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
-    @keyframes spin {
-      to {
-        transform: rotate(360deg);
-      }
+    /* custom properties */
+    :root {
+      --bg-0: #0b1220;
+      --bg-1: #101a2c;
+      --bg-2: #16233a;
+      --ink-1: #e8edf5;
+      --ink-2: #93a1b8;
+      --ink-3: #5b6a84;
+      --line: rgba(148,163,184,.14);
+      --ember: #f0a860;
+      --ember-deep: #d97b3f;
+      --moss: #6fcf97;
+      --amber: #e8c464;
+      --rust: #e07a5f;
+      --ease: cubic-bezier(.2,.7,.3,1);
     }
 
-    .spinning {
-      display: inline-block;
-      animation: spin 1s linear infinite;
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{color-scheme:dark}
+    body{
+      font-family:ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+      font-size:15px;line-height:1.6;
+      color:var(--ink-1);background:var(--bg-0);
+      min-height:100vh;position:relative;overflow-x:hidden;
     }
+
+    /* ambient aura */
+    .aura{
+      position:fixed;inset:0;z-index:0;pointer-events:none;
+      background:
+        radial-gradient(ellipse 60% 50% at 0% 0%,rgba(37,78,158,.35),transparent),
+        radial-gradient(ellipse 55% 45% at 100% 100%,rgba(217,123,63,.12),transparent),
+        radial-gradient(ellipse 50% 60% at 50% 50%,rgba(23,110,116,.15),transparent),
+        var(--bg-0);
+      mix-blend-mode:screen;
+      background-size:200% 200%;
+      animation:aura-drift 60s ease-in-out infinite alternate;
+    }
+    @keyframes aura-drift{0%{background-position:0% 0%}100%{background-position:100% 100%}}
+    @media(prefers-reduced-motion:reduce){.aura{animation:none}}
+
+    /* layout */
+    .page{position:relative;z-index:1;max-width:880px;margin:0 auto;padding:32px 20px 64px}
+
+    /* header */
+    .header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:28px}
+    .wordmark{font-family:'Sora',ui-sans-serif,sans-serif;font-weight:700;font-size:20px;letter-spacing:-0.01em;color:var(--ink-1)}
+    .last-run{font-size:13px;color:var(--ink-3);margin-top:2px}
+
+    /* CTA button */
+    .btn-run{
+      display:inline-flex;align-items:center;gap:8px;
+      background:var(--ember);color:#1a1206;
+      font-weight:600;font-size:14px;font-family:inherit;
+      padding:0 18px;min-height:40px;
+      border:none;border-radius:8px;cursor:pointer;
+      transition:background 150ms var(--ease),transform 150ms var(--ease),box-shadow 150ms var(--ease);
+      white-space:nowrap;
+    }
+    .btn-run:hover:not(:disabled){background:var(--ember-deep);transform:translateY(-1px);box-shadow:0 4px 16px rgba(240,168,96,.25)}
+    .btn-run:focus-visible{outline:2px solid var(--ember);outline-offset:3px}
+    .btn-run:disabled{background:var(--bg-2);color:var(--ink-3);cursor:not-allowed;transform:none;box-shadow:none}
+    .btn-run [data-lucide]{width:16px;height:16px;flex-shrink:0}
+
+    /* progress */
+    .progress-section{
+      display:none;margin-bottom:20px;
+      background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:16px 20px;
+    }
+    .progress-section.visible{display:block}
+    .progress-track{display:flex;align-items:center;gap:0}
+    .step-chip{display:flex;align-items:center;gap:8px;flex-shrink:0}
+    .step-icon-wrap{width:16px;height:16px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .step-icon-wrap [data-lucide]{width:16px;height:16px}
+    .step-icon-wrap.pending [data-lucide]{color:var(--ink-3)}
+    .step-icon-wrap.running [data-lucide]{color:var(--ember);animation:spin 1s linear infinite}
+    .step-icon-wrap.done [data-lucide]{color:var(--moss)}
+    .step-icon-wrap.error [data-lucide]{color:var(--rust)}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @media(prefers-reduced-motion:reduce){.step-icon-wrap.running [data-lucide]{animation:none}}
+    .step-label{font-size:13px;color:var(--ink-3);transition:color 150ms var(--ease)}
+    .step-label.running{color:var(--ember);font-weight:600}
+    .step-label.done{color:var(--moss)}
+    .step-label.error{color:var(--rust)}
+    .connector{flex:1;height:1px;background:var(--line);margin:0 8px;position:relative;min-width:20px}
+    .connector::after{content:'';position:absolute;inset:0;background:var(--ember);transform-origin:left;transform:scaleX(0);transition:transform 400ms var(--ease)}
+    .connector.filled::after{transform:scaleX(1)}
+
+    /* banners */
+    .banner{display:none;margin-bottom:20px;border-radius:10px;padding:12px 16px;font-size:14px;border:1px solid}
+    .banner.visible{display:flex;align-items:flex-start;gap:10px}
+    .banner-icon{width:16px;height:16px;flex-shrink:0;margin-top:2px}
+    .banner-summary{background:rgba(111,207,151,.08);border-color:rgba(111,207,151,.25);color:var(--moss)}
+    .banner-error{background:rgba(224,122,95,.08);border-color:rgba(224,122,95,.25);color:var(--rust)}
+
+    /* filter bar */
+    .filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0}
+    .filter-select{
+      appearance:none;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;
+      color:var(--ink-1);font-size:14px;font-family:inherit;
+      padding:0 36px 0 12px;height:40px;min-width:160px;cursor:pointer;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235b6a84' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat;background-position:right 10px center;
+      transition:border-color 150ms var(--ease);
+    }
+    .filter-select:focus{outline:none;border-color:var(--ember);box-shadow:0 0 0 2px rgba(240,168,96,.2)}
+    .job-count-pill{margin-left:auto;font-size:12px;color:var(--ink-3);background:var(--bg-2);border:1px solid var(--line);border-radius:20px;padding:4px 12px;white-space:nowrap}
+
+    /* job cards */
+    .jobs-list{display:flex;flex-direction:column;gap:16px}
+    .job-card{
+      background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:20px 24px;
+      box-shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+      transition:box-shadow 200ms var(--ease),transform 200ms var(--ease);
+      opacity:0;transform:translateY(8px);
+    }
+    .job-card.mounted{opacity:1;transform:translateY(0);transition:opacity 250ms var(--ease),transform 250ms var(--ease),box-shadow 200ms var(--ease)}
+    @media(prefers-reduced-motion:reduce){.job-card{opacity:1;transform:none}.job-card.mounted{transition:box-shadow 200ms var(--ease)}}
+    .job-card:hover{box-shadow:0 2px 4px rgba(0,0,0,.3),0 12px 32px rgba(0,0,0,.35);transform:translateY(-1px)}
+    .card-top{display:flex;align-items:flex-start;gap:16px}
+    .card-body{flex:1;min-width:0}
+    .card-meta{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
+
+    /* score badge */
+    .score-badge{width:44px;height:44px;border-radius:50%;position:relative;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+    .score-inner{position:relative;z-index:1;width:34px;height:34px;background:var(--bg-1);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;line-height:1}
+
+    /* verdict pill */
+    .verdict-pill{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:20px}
+    .verdict-apply{background:rgba(111,207,151,.12);color:var(--moss);border:1px solid rgba(111,207,151,.25)}
+    .verdict-review{background:rgba(232,196,100,.12);color:var(--amber);border:1px solid rgba(232,196,100,.25)}
+    .verdict-skip,.verdict-other{background:rgba(148,163,184,.08);color:var(--ink-3);border:1px solid var(--line)}
+
+    .job-title{font-family:'Sora',ui-sans-serif,sans-serif;font-weight:600;font-size:16px;line-height:1.35;color:var(--ink-1);margin-bottom:2px}
+    .job-company{font-size:13px;color:var(--ink-2)}
+    .job-desc{font-size:14px;color:var(--ink-2);margin-top:8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+
+    /* accordions */
+    .accordion{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+    .accordion summary{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-3);cursor:pointer;user-select:none;list-style:none;outline:none}
+    .accordion summary::-webkit-details-marker{display:none}
+    .accordion summary:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+    .accordion summary .chevron{width:14px;height:14px;flex-shrink:0;transition:transform 200ms var(--ease)}
+    .accordion[open] summary .chevron{transform:rotate(180deg)}
+    .accordion ul{margin-top:6px;padding-left:16px;list-style:disc;font-size:13px;color:var(--ink-2);line-height:1.6}
+    .accordion p{margin-top:6px;font-size:13px;color:var(--ink-2);line-height:1.6}
+
+    /* card footer */
+    .card-footer{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
+    .btn-open{
+      display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2);
+      text-decoration:none;border:1px solid var(--line);border-radius:8px;
+      padding:0 12px;min-height:40px;min-width:40px;
+      transition:border-color 150ms var(--ease),color 150ms var(--ease);
+    }
+    .btn-open:hover{color:var(--ink-1);border-color:var(--ink-3)}
+    .btn-open:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+    .btn-open [data-lucide]{width:14px;height:14px}
+    .btn-status{
+      display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500;font-family:inherit;
+      border:none;border-radius:8px;padding:0 14px;min-height:40px;min-width:40px;
+      cursor:pointer;margin-left:auto;
+      transition:background 150ms var(--ease),color 150ms var(--ease),transform 100ms var(--ease);
+    }
+    .btn-status:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+    .btn-status:active{transform:scale(.97)}
+    .btn-status [data-lucide]{width:14px;height:14px}
+    .status-none{background:var(--bg-2);color:var(--ink-2);border:1px solid var(--line)}
+    .status-applied{background:rgba(111,207,151,.12);color:var(--moss);border:1px solid rgba(111,207,151,.25)}
+    .status-skipped{background:rgba(224,122,95,.12);color:var(--rust);border:1px solid rgba(224,122,95,.25)}
+
+    /* empty state */
+    .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 0;color:var(--ink-3);gap:12px;text-align:center}
+    .empty-state [data-lucide]{width:40px;height:40px}
+    .empty-state p{font-size:14px}
   </style>
 </head>
 
-<body class="bg-gray-950 text-gray-100 min-h-screen p-6">
-  <div class="max-w-4xl mx-auto">
+<body>
+  <div class="aura" aria-hidden="true"></div>
+
+  <div class="page">
 
     <!-- Header -->
-    <div class="flex items-center justify-between mb-6">
+    <header class="header">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight">Job Scraper</h1>
-        <p id="last-run" class="text-sm text-gray-500 mt-0.5"></p>
+        <div class="wordmark">Job Scraper</div>
+        <div id="last-run" class="last-run"></div>
       </div>
-      <button id="run-btn" onclick="runAgent()" class="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed
-             text-white font-semibold px-5 py-2 rounded-lg transition text-sm">
+      <button id="run-btn" class="btn-run" onclick="runAgent()" aria-label="Run agent">
+        <i data-lucide="play"></i>
         Run Agent
       </button>
-    </div>
+    </header>
 
-    <!-- Progress Section -->
-    <div id="progress-section" class="hidden mb-5 bg-gray-900 border border-gray-800 rounded-xl p-4">
-      <div class="flex items-center gap-3 flex-wrap">
-        <div class="flex items-center gap-1.5">
-          <span id="s1-icon" class="text-gray-600">○</span>
-          <span id="s1-label" class="text-sm text-gray-500">Build Config</span>
+    <!-- Progress -->
+    <div id="progress-section" class="progress-section" aria-live="polite" aria-label="Pipeline progress">
+      <div class="progress-track">
+        <div class="step-chip">
+          <div id="s1-icon" class="step-icon-wrap pending"><i data-lucide="circle-dashed"></i></div>
+          <span id="s1-label" class="step-label">Build Config</span>
         </div>
-        <span class="text-gray-700">→</span>
-        <div class="flex items-center gap-1.5">
-          <span id="s2-icon" class="text-gray-600">○</span>
-          <span id="s2-label" class="text-sm text-gray-500">Scrape Jobs</span>
+        <div id="conn-1" class="connector"></div>
+        <div class="step-chip">
+          <div id="s2-icon" class="step-icon-wrap pending"><i data-lucide="circle-dashed"></i></div>
+          <span id="s2-label" class="step-label">Scrape Jobs</span>
         </div>
-        <span class="text-gray-700">→</span>
-        <div class="flex items-center gap-1.5">
-          <span id="s3-icon" class="text-gray-600">○</span>
-          <span id="s3-label" class="text-sm text-gray-500">Analyze</span>
+        <div id="conn-2" class="connector"></div>
+        <div class="step-chip">
+          <div id="s3-icon" class="step-icon-wrap pending"><i data-lucide="circle-dashed"></i></div>
+          <span id="s3-label" class="step-label">Analyze</span>
         </div>
       </div>
     </div>
 
     <!-- Summary Banner -->
-    <div id="summary-banner" class="hidden mb-5 bg-green-950 border border-green-800
-       rounded-xl p-3 text-green-300 text-sm"></div>
+    <div id="summary-banner" class="banner banner-summary" role="status" aria-live="polite">
+      <i data-lucide="check-circle-2" class="banner-icon"></i>
+      <span id="summary-text"></span>
+    </div>
 
     <!-- Error Banner -->
-    <div id="error-banner" class="hidden mb-5 bg-red-950 border border-red-800
-       rounded-xl p-3 text-red-300 text-sm"></div>
+    <div id="error-banner" class="banner banner-error" role="alert" aria-live="polite">
+      <i data-lucide="alert-triangle" class="banner-icon"></i>
+      <span id="error-text"></span>
+    </div>
 
     <!-- Filter Bar -->
-    <div class="flex gap-3 mb-4 items-center">
-      <select id="filter-verdict" onchange="renderJobs()"
-        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200">
+    <div class="filter-bar">
+      <label class="sr-only" for="filter-verdict">Filter by verdict</label>
+      <select id="filter-verdict" class="filter-select" onchange="renderJobs()" aria-label="Filter by verdict">
         <option value="all">All verdicts</option>
         <option value="apply">Apply</option>
         <option value="review">Review</option>
         <option value="skip">Skip</option>
       </select>
-      <select id="sort-by" onchange="renderJobs()"
-        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200">
-        <option value="score-desc">Score: High → Low</option>
-        <option value="score-asc">Score: Low → High</option>
-        <option value="company-asc">Company: A → Z</option>
+      <label class="sr-only" for="sort-by">Sort by</label>
+      <select id="sort-by" class="filter-select" onchange="renderJobs()" aria-label="Sort jobs">
+        <option value="score-desc">Score: High &#x2192; Low</option>
+        <option value="score-asc">Score: Low &#x2192; High</option>
+        <option value="company-asc">Company: A &#x2192; Z</option>
       </select>
-      <span id="job-count" class="ml-auto text-xs text-gray-500"></span>
+      <span id="job-count" class="job-count-pill" aria-live="polite"></span>
     </div>
 
     <!-- Jobs List -->
-    <div id="jobs-list"></div>
+    <div id="jobs-list" class="jobs-list" aria-label="Job listings"></div>
 
   </div>
 
   <script>
     let allJobs = [];
 
-    /* ── utils ───────────────────────────────────────────── */
+    /* utils */
     const esc = s => String(s ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-    function scoreCls(score) {
-      if (score >= 80) return 'bg-green-800 text-green-100';
-      if (score >= 60) return 'bg-yellow-800 text-yellow-100';
-      return 'bg-red-900 text-red-200';
+    function scoreColor(score) {
+      if (score >= 80) return 'var(--moss)';
+      if (score >= 60) return 'var(--amber)';
+      return 'var(--rust)';
     }
 
-    function verdictBorder(v) {
-      if (v === 'apply') return 'border-green-800';
-      if (v === 'review') return 'border-yellow-800';
-      return 'border-gray-800';
+    function verdictClass(v) {
+      if (v === 'apply') return 'verdict-apply';
+      if (v === 'review') return 'verdict-review';
+      if (v === 'skip') return 'verdict-skip';
+      return 'verdict-other';
     }
 
     function statusCls(s) {
-      if (s === 'applied') return 'bg-green-700 hover:bg-green-600 text-white';
-      if (s === 'skipped') return 'bg-red-800 hover:bg-red-700 text-white';
-      return 'bg-gray-700 hover:bg-gray-600 text-gray-300';
+      if (s === 'applied') return 'status-applied';
+      if (s === 'skipped') return 'status-skipped';
+      return 'status-none';
     }
 
     function statusLabel(s) {
-      if (s === 'applied') return 'Applied ✓';
-      if (s === 'skipped') return 'Skipped';
-      return 'Mark Status';
+      if (s === 'applied') return '<i data-lucide="check"></i> Applied';
+      if (s === 'skipped') return '<i data-lucide="x"></i> Skipped';
+      return '<i data-lucide="bookmark"></i> Mark Status';
     }
 
     function nextStatus(s) {
@@ -125,57 +301,59 @@
     }
 
     function collapse(label, items) {
-      if (!items?.length) return '';
-      const lis = items.map(i => `<li>${esc(i)}</li>`).join('');
-      return `<details class="mt-2 group" open>
-      <summary class="text-xs uppercase tracking-wide text-gray-600
-                      cursor-pointer hover:text-gray-400 select-none">
-        ${esc(label)} (${items.length})
-      </summary>
-      <ul class="mt-1 ml-3 space-y-0.5 list-disc list-inside text-sm text-gray-400">${lis}</ul>
-    </details>`;
+      if (!items || !items.length) return '';
+      const lis = items.map(i => '<li>' + esc(i) + '</li>').join('');
+      return '<details class="accordion">'
+        + '<summary><i data-lucide="chevron-down" class="chevron"></i>' + esc(label) + ' (' + items.length + ')</summary>'
+        + '<ul>' + lis + '</ul>'
+        + '</details>';
     }
 
-    /* ── step progress ───────────────────────────────────── */
+    function collapseText(label, text) {
+      if (!text) return '';
+      return '<details class="accordion">'
+        + '<summary><i data-lucide="chevron-down" class="chevron"></i>' + esc(label) + '</summary>'
+        + '<p>' + esc(text) + '</p>'
+        + '</details>';
+    }
+
+    /* step progress */
+    const STEP_ICONS = { pending: 'circle-dashed', running: 'loader-circle', done: 'check', error: 'x' };
+
     function setStep(n, state) {
-      const icon = document.getElementById(`s${n}-icon`);
-      const label = document.getElementById(`s${n}-label`);
-      if (state === 'running') {
-        icon.className = 'spinning text-blue-400';
-        icon.textContent = '↻';
-        label.className = 'text-sm text-blue-300 font-medium';
-      } else if (state === 'done') {
-        icon.className = 'text-green-400';
-        icon.textContent = '✓';
-        label.className = 'text-sm text-green-300';
-      } else if (state === 'error') {
-        icon.className = 'text-red-400';
-        icon.textContent = '✗';
-        label.className = 'text-sm text-red-400';
-      } else {
-        icon.className = 'text-gray-600';
-        icon.textContent = '○';
-        label.className = 'text-sm text-gray-500';
+      const iconWrap = document.getElementById('s' + n + '-icon');
+      const label = document.getElementById('s' + n + '-label');
+      iconWrap.className = 'step-icon-wrap ' + state;
+      iconWrap.innerHTML = '<i data-lucide="' + (STEP_ICONS[state] || 'circle-dashed') + '"></i>';
+      label.className = 'step-label' + (state !== 'pending' ? ' ' + state : '');
+      lucide.createIcons({ nodes: [iconWrap] });
+      if (state === 'done' && n < 3) {
+        const conn = document.getElementById('conn-' + n);
+        if (conn) conn.classList.add('filled');
       }
     }
 
-    /* ── run agent ───────────────────────────────────────── */
+    /* run agent */
     function runAgent() {
       const btn = document.getElementById('run-btn');
       const prog = document.getElementById('progress-section');
-      const summary = document.getElementById('summary-banner');
-      const errBan = document.getElementById('error-banner');
+      const summaryBanner = document.getElementById('summary-banner');
+      const errBanner = document.getElementById('error-banner');
 
       btn.disabled = true;
-      btn.textContent = 'Running…';
-      prog.classList.remove('hidden');
-      summary.classList.add('hidden');
-      errBan.classList.add('hidden');
-      for (let i = 1; i <= 3; i++) setStep(i, 'pending');
+      btn.innerHTML = '<i data-lucide="loader-circle" style="animation:spin 1s linear infinite"></i> Running\u2026';
+      lucide.createIcons({ nodes: [btn] });
+
+      prog.classList.add('visible');
+      summaryBanner.classList.remove('visible');
+      errBanner.classList.remove('visible');
+
+      document.querySelectorAll('.connector').forEach(function(c) { c.classList.remove('filled'); });
+      for (var i = 1; i <= 3; i++) setStep(i, 'pending');
 
       const es = new EventSource('/api/run');
 
-      es.onmessage = ({ data }) => {
+      es.onmessage = function({ data }) {
         const ev = JSON.parse(data);
 
         if (ev.step === 'busy') {
@@ -185,20 +363,23 @@
         }
         if (ev.step === 'error') {
           es.close(); reset(btn, prog);
-          for (let i = 1; i <= 3; i++) {
-            if (document.getElementById(`s${i}-icon`).textContent === '↻') setStep(i, 'error');
+          for (var i = 1; i <= 3; i++) {
+            if (document.getElementById('s' + i + '-icon').classList.contains('running')) {
+              setStep(i, 'error');
+            }
           }
-          showError(`Pipeline error: ${ev.message}`);
+          showError('Pipeline error: ' + ev.message);
           return;
         }
         if (ev.step === 'complete') {
           es.close(); reset(btn, prog);
           const ts = new Date().toLocaleString();
           localStorage.setItem('lastRun', ts);
-          document.getElementById('last-run').textContent = `Last run: ${ts}`;
-          summary.textContent =
-            `Run complete — found ${ev.total} jobs, ${ev.above_threshold} above threshold (score ≥ 70)`;
-          summary.classList.remove('hidden');
+          document.getElementById('last-run').textContent = 'Last run: ' + ts;
+          document.getElementById('summary-text').textContent =
+            'Run complete \u2014 found ' + ev.total + ' jobs, ' + ev.above_threshold + ' above threshold (score \u2265 70)';
+          summaryBanner.classList.add('visible');
+          lucide.createIcons({ nodes: [summaryBanner] });
           loadJobs();
           return;
         }
@@ -207,7 +388,7 @@
         }
       };
 
-      es.onerror = () => {
+      es.onerror = function() {
         es.close(); reset(btn, prog);
         showError('Connection lost. Is the server running?');
       };
@@ -215,17 +396,19 @@
 
     function reset(btn, prog) {
       btn.disabled = false;
-      btn.textContent = 'Run Agent';
-      prog.classList.add('hidden');
+      btn.innerHTML = '<i data-lucide="play"></i> Run Agent';
+      lucide.createIcons({ nodes: [btn] });
+      prog.classList.remove('visible');
     }
 
     function showError(msg) {
       const el = document.getElementById('error-banner');
-      el.textContent = msg;
-      el.classList.remove('hidden');
+      document.getElementById('error-text').textContent = msg;
+      el.classList.add('visible');
+      lucide.createIcons({ nodes: [el] });
     }
 
-    /* ── jobs ────────────────────────────────────────────── */
+    /* jobs */
     async function loadJobs() {
       try {
         const res = await fetch('/api/jobs');
@@ -240,55 +423,63 @@
       const verdict = document.getElementById('filter-verdict').value;
       const sort = document.getElementById('sort-by').value;
 
-      let jobs = allJobs.filter(j => verdict === 'all' || j.verdict === verdict);
-      if (sort === 'score-desc') jobs.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-      else if (sort === 'score-asc') jobs.sort((a, b) => (a.score ?? 0) - (b.score ?? 0));
-      else jobs.sort((a, b) => (a.company ?? '').localeCompare(b.company ?? ''));
+      let jobs = allJobs.filter(function(j) { return verdict === 'all' || j.verdict === verdict; });
+      if (sort === 'score-desc') jobs.sort(function(a, b) { return (b.score ?? 0) - (a.score ?? 0); });
+      else if (sort === 'score-asc') jobs.sort(function(a, b) { return (a.score ?? 0) - (b.score ?? 0); });
+      else jobs.sort(function(a, b) { return (a.company ?? '').localeCompare(b.company ?? ''); });
 
       document.getElementById('job-count').textContent =
-        `${jobs.length} job${jobs.length !== 1 ? 's' : ''}`;
+        jobs.length + ' job' + (jobs.length !== 1 ? 's' : '');
+
+      const list = document.getElementById('jobs-list');
 
       if (!jobs.length) {
-        document.getElementById('jobs-list').innerHTML =
-          '<p class="text-gray-600 text-sm text-center py-12">No jobs to show. Run the agent or adjust filters.</p>';
+        list.innerHTML = '<div class="empty-state"><i data-lucide="telescope"></i><p>No jobs to show. Run the agent or adjust filters.</p></div>';
+        lucide.createIcons({ nodes: [list] });
         return;
       }
 
-      document.getElementById('jobs-list').innerHTML = jobs.map(job => `
-      <div class="bg-gray-900 border ${verdictBorder(job.verdict)} rounded-xl p-4 mb-3">
-        <div class="flex items-start gap-3">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap mb-1">
-              <span class="text-xs font-bold px-2 py-0.5 rounded ${scoreCls(job.score)}">
-                ${esc(job.score ?? '?')}
-              </span>
-              <span class="text-xs uppercase tracking-wide text-gray-600">${esc(job.verdict ?? '')}</span>
-            </div>
-            <h3 class="font-semibold leading-snug">${esc(job.title ?? '')}</h3>
-            <p class="text-sm text-gray-500">
-              ${esc(job.company ?? '')}${job.location ? ' · ' + esc(job.location) : ''}
-            </p>
-          </div>
-        </div>
-        ${collapse('Match Reasons', job.match_reasons)}
-        ${collapse('Red Flags', job.red_flags)}
-        ${job.suggested_angle ? `
-          <details class="mt-2" open>
-            <summary class="text-xs uppercase tracking-wide text-gray-600
-                            cursor-pointer hover:text-gray-400 select-none">Suggested Angle</summary>
-            <p class="mt-1 text-sm text-gray-400">${esc(job.suggested_angle)}</p>
-          </details>` : ''}
-        <div class="flex gap-2 mt-3 flex-wrap">
-          <a href="${esc(job.url ?? '#')}" target="_blank" rel="noopener noreferrer"
-             class="text-sm bg-blue-700 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition">
-            Open Job ↗
-          </a>
-          <button onclick="toggleStatus('${esc(job.url ?? '')}','${esc(job.status ?? 'none')}')"
-            class="text-sm px-3 py-1.5 rounded-lg transition ml-auto ${statusCls(job.status)}">
-            ${statusLabel(job.status)}
-          </button>
-        </div>
-      </div>`).join('');
+      list.innerHTML = jobs.map(function(job, idx) {
+        const score = job.score ?? 0;
+        const color = scoreColor(score);
+        const pct = Math.min(100, Math.max(0, score));
+        const ring = 'conic-gradient(' + color + ' calc(' + pct + ' * 1%), var(--bg-2) 0)';
+
+        return '<article class="job-card" data-idx="' + idx + '" aria-label="' + esc(job.title) + ' at ' + esc(job.company) + '">'
+          + '<div class="card-top">'
+          + '<div class="score-badge" style="background:' + ring + '" aria-label="Score ' + esc(score) + '">'
+          + '<div class="score-inner" style="color:' + color + '">' + esc(score) + '</div>'
+          + '</div>'
+          + '<div class="card-body">'
+          + '<div class="card-meta"><span class="verdict-pill ' + verdictClass(job.verdict) + '">' + esc(job.verdict ?? 'n/a') + '</span></div>'
+          + '<h2 class="job-title">' + esc(job.title ?? '') + '</h2>'
+          + '<p class="job-company">' + esc(job.company ?? '') + (job.location ? ' \u00b7 ' + esc(job.location) : '') + '</p>'
+          + '</div>'
+          + '</div>'
+          + (job.description ? '<p class="job-desc">' + esc(job.description) + '</p>' : '')
+          + collapse('Match Reasons', job.match_reasons)
+          + collapse('Red Flags', job.red_flags)
+          + collapseText('Suggested Angle', job.suggested_angle)
+          + '<div class="card-footer">'
+          + '<a href="' + esc(job.url ?? '#') + '" target="_blank" rel="noopener noreferrer" class="btn-open">'
+          + '<i data-lucide="external-link"></i>Open job</a>'
+          + '<button class="btn-status ' + statusCls(job.status) + '"'
+          + ' onclick="toggleStatus(\'' + esc(job.url ?? '') + '\',\'' + esc(job.status ?? 'none') + '\')"'
+          + ' aria-label="Status: ' + esc(job.status || 'none') + '">'
+          + statusLabel(job.status)
+          + '</button>'
+          + '</div>'
+          + '</article>';
+      }).join('');
+
+      lucide.createIcons({ nodes: [list] });
+
+      const cards = list.querySelectorAll('.job-card');
+      const maxStagger = Math.min(cards.length, 10);
+      cards.forEach(function(card, i) {
+        const delay = i < maxStagger ? i * 30 : 0;
+        setTimeout(function() { card.classList.add('mounted'); }, delay);
+      });
     }
 
     async function toggleStatus(url, current) {
@@ -297,10 +488,10 @@
         const res = await fetch('/api/status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, status: next })
+          body: JSON.stringify({ url: url, status: next })
         });
         if (!res.ok) throw new Error('server error');
-        const job = allJobs.find(j => j.url === url);
+        const job = allJobs.find(function(j) { return j.url === url; });
         if (job) job.status = next;
         renderJobs();
       } catch {
@@ -308,9 +499,10 @@
       }
     }
 
-    /* ── init ────────────────────────────────────────────── */
+    /* init */
     const saved = localStorage.getItem('lastRun');
-    if (saved) document.getElementById('last-run').textContent = `Last run: ${saved}`;
+    if (saved) document.getElementById('last-run').textContent = 'Last run: ' + saved;
+    lucide.createIcons();
     loadJobs();
   </script>
 </body>
