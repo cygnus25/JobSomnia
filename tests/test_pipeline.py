@@ -155,6 +155,8 @@ def test_analyze_jobs_writes_jobs_json(tmp_path, monkeypatch):
     (tmp_path / "output").mkdir()
     (tmp_path / "prompts").mkdir()
     (tmp_path / "prompts/analyze.md").write_text("analyze")
+    raw_jobs = [{"title": "Dev", "url": "https://example.com"}]
+    (tmp_path / "output/raw_jobs.json").write_text(json.dumps(raw_jobs))
 
     analyzed = [{"title": "Dev", "score": 85, "verdict": "apply"}]
     with patch.object(llm, "run_llm", return_value=json.dumps(analyzed)):
@@ -162,3 +164,42 @@ def test_analyze_jobs_writes_jobs_json(tmp_path, monkeypatch):
 
     assert result == analyzed
     assert json.loads((tmp_path / "output" / "jobs.json").read_text()) == analyzed
+
+
+def test_analyze_jobs_sends_raw_jobs_as_context(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    import jobscraper.llm as llm
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts/analyze.md").write_text("analyze")
+    raw_jobs = [{"title": "Dev", "url": "https://example.com"}]
+    (tmp_path / "output/raw_jobs.json").write_text(json.dumps(raw_jobs))
+
+    with patch.object(llm, "run_llm", return_value="[]") as mock_run_llm:
+        pipeline.analyze_jobs()
+
+    context = mock_run_llm.call_args[0][1]
+    assert "https://example.com" in context
+
+
+def test_analyze_jobs_batches_in_groups_of_10(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    import jobscraper.llm as llm
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts/analyze.md").write_text("analyze")
+    raw_jobs = [{"title": f"Dev {i}", "url": f"https://example.com/{i}"} for i in range(25)]
+    (tmp_path / "output/raw_jobs.json").write_text(json.dumps(raw_jobs))
+
+    def fake_run_llm(prompt_file, context=""):
+        # Echo back one scored job per job title found in this batch's context.
+        n = context.count("https://example.com/")
+        return json.dumps([{"title": "Dev", "score": 90} for _ in range(n)])
+
+    with patch.object(llm, "run_llm", side_effect=fake_run_llm) as mock_run_llm:
+        result = pipeline.analyze_jobs()
+
+    assert mock_run_llm.call_count == 3  # 10 + 10 + 5
+    assert len(result) == 25

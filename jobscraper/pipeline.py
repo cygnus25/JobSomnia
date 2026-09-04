@@ -32,10 +32,31 @@ def build_search_config() -> dict:
 
 
 # ── step 3: analyze scraped jobs via LLM ──────────────────
+# Jobs per analyze.md LLM call. max_tokens is 8192; sending all scraped jobs
+# in one call risks truncating the output JSON and silently dropping jobs.
+BATCH_SIZE = 10
+
+
 def analyze_jobs() -> list[dict]:
-    """Run LLM analysis on raw_jobs.json and write output/jobs.json."""
+    """Run LLM analysis on raw_jobs.json and write output/jobs.json.
+
+    Jobs are read from output/raw_jobs.json and sent to the LLM in batches
+    of BATCH_SIZE, since the model has no way to read the file itself over
+    HTTP; each batch's jobs are inlined as JSON in the same message as the
+    prompt. Results from all batches are merged before writing.
+    """
     today = datetime.now().strftime("%Y-%m-%d")
-    all_jobs = run_claude_json(str(ROOT / "prompts/analyze.md"), context=f"Today's date is {today}.")
+    raw_jobs = json.loads((ROOT / "output/raw_jobs.json").read_text(encoding="utf-8"))
+
+    all_jobs = []
+    for i in range(0, len(raw_jobs), BATCH_SIZE):
+        batch = raw_jobs[i:i + BATCH_SIZE]
+        context = (
+            f"Today's date is {today}.\n\n"
+            f"Jobs to score (JSON array):\n{json.dumps(batch, indent=2)}"
+        )
+        all_jobs.extend(run_claude_json(str(ROOT / "prompts/analyze.md"), context=context))
+
     (ROOT / "output/jobs.json").write_text(json.dumps(all_jobs, indent=2))
     return all_jobs
 

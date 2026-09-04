@@ -1,5 +1,5 @@
 Read resume.md to understand the candidate's full profile — profession, skills, experience, seniority, location, and preferences. The candidate can be in any profession; judge every job against what the resume actually shows.
-Then read output/raw_jobs.json.
+The jobs to score are provided as a JSON array below this prompt, in the same message — not in a file.
 
 For each job, score it 0–100 based on how well it matches THIS specific candidate:
 
@@ -11,7 +11,7 @@ Scoring factors:
 - Preferences: honor any preferences stated in the resume (industries, company types or sizes, tools or stacks to avoid)
 - Red flags: requires physical presence or relocation, citizenship or work-authorization restrictions the candidate doesn't meet, core requirements entirely outside the candidate's skill set, posting is closed or older than 30 days
 
-Include only jobs with score >= 60.
+Include only jobs with score >= 70.
 
 Your entire response must be only the raw JSON array — no markdown fences, no explanation, nothing before or after it:
 
