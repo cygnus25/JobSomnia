@@ -45,6 +45,8 @@ Then add your own `resume.md` in the project root (markdown resume — it is git
 
 Optionally edit `config.json` to change where the agent searches: `job_boards` is the list of sites to query (one search each), and `reddit_groups` are groups of subreddits (one grouped search each, with optional `extra_terms` added to the query). The defaults cover LinkedIn, Indeed, Wellfound, Glassdoor, JobStreet, OnlineJobs.ph, and a set of profession-neutral hiring subreddits — if your field has dedicated boards or subreddits (e.g. Dribbble for designers, r/VirtualAssistant for VAs), add them here.
 
+`api_sources` lists free public job-board APIs queried alongside Firecrawl on every run (no extra API key needed): `remotive.com`, `remoteok.com`, and `arbeitnow.com`, all enabled by default. Set it to `[]` to disable API sourcing, or list only the ones you want.
+
 ## Run
 
 ```bash

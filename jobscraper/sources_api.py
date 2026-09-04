@@ -1,0 +1,151 @@
+# jobscraper/sources_api.py
+"""Free/public job-board APIs, queried alongside Firecrawl search+scrape
+(stdlib urllib only, matching llm.py's HTTP style).
+
+Each fetch_*() hits one board's public API and normalizes its postings into
+the same shape scrape_jobs() produces (title, company, location, url,
+description, posted_date, source), so pipeline.py can merge the two lists
+and run every job through the same seen.json dedupe and LLM scoring.
+
+These free APIs are unreliable and outside our control, so every fetcher is
+best-effort: it catches every exception and returns [] rather than ever
+failing the run.
+"""
+import json
+import logging
+import re
+import urllib.request
+
+from .config import load_config
+
+log = logging.getLogger(__name__)
+
+TIMEOUT_S = 30
+# RemoteOK in particular rejects requests with no/generic User-Agent, so all
+# three sources send an identifying one.
+USER_AGENT = "ai-job-scraper/1.0"
+
+# Keep each source's contribution bounded — these feeds can return hundreds
+# of postings, and it's the newest ones that matter for a daily run.
+MAX_JOBS_PER_SOURCE = 50
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags from `text` (RemoteOK descriptions are HTML),
+    collapsing the whitespace left behind."""
+    return _WS_RE.sub(" ", _TAG_RE.sub(" ", text or "")).strip()
+
+
+def _get_json(url: str):
+    """GET `url` and return the parsed JSON body. Raises on any failure —
+    each fetch_*() catches broadly and degrades to []."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def fetch_remotive() -> list[dict]:
+    """Fetch remote postings from Remotive's public API."""
+    try:
+        data = _get_json("https://remotive.com/api/remote-jobs")
+        jobs = []
+        for j in data.get("jobs", []):
+            url = j.get("url", "")
+            if not url:
+                continue
+            jobs.append({
+                "title": j.get("title", ""),
+                "company": j.get("company_name", ""),
+                "location": j.get("candidate_required_location") or "Remote",
+                "url": url,
+                "description": j.get("description", ""),
+                "posted_date": j.get("publication_date", ""),
+                "source": "remotive.com",
+            })
+        return jobs
+    except Exception as e:
+        log.info(f"  Remotive API failed: {e}")
+        return []
+
+
+def fetch_remoteok() -> list[dict]:
+    """Fetch remote postings from RemoteOK's public API.
+
+    The response is a JSON array whose first element is a legal-notice
+    object, not a posting — it's skipped.
+    """
+    try:
+        data = _get_json("https://remoteok.com/api")
+        jobs = []
+        for j in data[1:]:
+            if not isinstance(j, dict):
+                continue
+            url = j.get("url", "")
+            if not url:
+                continue
+            jobs.append({
+                "title": j.get("position", ""),
+                "company": j.get("company", ""),
+                "location": j.get("location") or "Remote",
+                "url": url,
+                "description": _strip_html(j.get("description", "")),
+                "posted_date": j.get("date", ""),
+                "source": "remoteok.com",
+            })
+        return jobs
+    except Exception as e:
+        log.info(f"  RemoteOK API failed: {e}")
+        return []
+
+
+def fetch_arbeitnow() -> list[dict]:
+    """Fetch remote postings from Arbeitnow's public job board API."""
+    try:
+        data = _get_json("https://www.arbeitnow.com/api/job-board-api")
+        jobs = []
+        for j in data.get("data", []):
+            url = j.get("url", "")
+            if not url:
+                continue
+            jobs.append({
+                "title": j.get("title", ""),
+                "company": j.get("company_name", ""),
+                "location": j.get("location") or "Remote",
+                "url": url,
+                "description": j.get("description", ""),
+                "posted_date": str(j.get("created_at", "")),
+                "source": "arbeitnow.com",
+            })
+        return jobs
+    except Exception as e:
+        log.info(f"  Arbeitnow API failed: {e}")
+        return []
+
+
+def fetch_api_jobs() -> list[dict]:
+    """Fetch jobs from every source listed in config.json's "api_sources"
+    (default: all three — see config.DEFAULT_CONFIG; [] disables API
+    sourcing entirely). Each source is capped at MAX_JOBS_PER_SOURCE jobs,
+    trusting these feeds' natural newest-first ordering.
+
+    The fetch_*() -> source-name mapping is built here (not at module
+    level) so tests can patch.object(sources_api, "fetch_remotive", ...)
+    and have fetch_api_jobs() actually see the replacement."""
+    fetchers = {
+        "remotive.com": fetch_remotive,
+        "remoteok.com": fetch_remoteok,
+        "arbeitnow.com": fetch_arbeitnow,
+    }
+    jobs: list[dict] = []
+    for name in load_config().get("api_sources", []):
+        fetch = fetchers.get(name)
+        if fetch is None:
+            log.info(f"  Unknown api_sources entry {name!r} — skipping")
+            continue
+        source_jobs = fetch()[:MAX_JOBS_PER_SOURCE]
+        log.info(f"  {name}: {len(source_jobs)} job(s)")
+        jobs.extend(source_jobs)
+    return jobs

@@ -132,6 +132,7 @@ def test_run_pipeline_emits_all_step_events(tmp_path, monkeypatch):
 
     with patch.object(pipeline, "build_search_config", return_value=mock_config), \
          patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
          patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
         result = pipeline.run_pipeline(on_progress=lambda s, l, st: events.append((s, st)))
 
@@ -172,6 +173,7 @@ def test_run_pipeline_works_without_callback(tmp_path, monkeypatch):
 
     with patch.object(pipeline, "build_search_config", return_value=mock_config), \
          patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
          patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
         result = pipeline.run_pipeline()
 
@@ -195,6 +197,7 @@ def test_run_pipeline_writes_run_history(tmp_path, monkeypatch):
 
     with patch.object(pipeline, "build_search_config", return_value=mock_config), \
          patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
          patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
         result = pipeline.run_pipeline()
 
@@ -222,6 +225,7 @@ def test_run_pipeline_second_run_scores_zero_when_all_seen(tmp_path, monkeypatch
 
     with patch.object(pipeline, "build_search_config", return_value=mock_config), \
          patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
          patch.object(llm, "run_llm", return_value=json.dumps([{"title": "Dev", "score": 90}])) as mock_run_llm:
         first = pipeline.run_pipeline()
         second = pipeline.run_pipeline()
@@ -231,6 +235,113 @@ def test_run_pipeline_second_run_scores_zero_when_all_seen(tmp_path, monkeypatch
     assert second["total"] == 0
     assert second["above_threshold"] == 0
     assert mock_run_llm.call_count == 1  # the second run never calls the LLM to score anything
+    # output/jobs.json must still hold the job scored during the first run —
+    # a no-new-jobs run must not blank out the dashboard.
+    assert json.loads((tmp_path / "output/jobs.json").read_text()) == [{"title": "Dev", "score": 90}]
+
+
+def test_run_pipeline_accumulates_jobs_across_runs(tmp_path, monkeypatch):
+    import jobscraper.llm as llm
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts/analyze.md").write_text("analyze")
+
+    mock_config = {"search_queries": ["q"]}
+    job1 = {"title": "Dev 1", "company": "Co", "location": "Remote",
+            "url": "https://example.com/1", "description": "",
+            "posted_date": "", "source": "example.com"}
+    job2 = {"title": "Dev 2", "company": "Co", "location": "Remote",
+            "url": "https://example.com/2", "description": "",
+            "posted_date": "", "source": "example.com"}
+    scored1 = {"title": "Dev 1", "url": "https://example.com/1", "score": 90}
+    scored2 = {"title": "Dev 2", "url": "https://example.com/2", "score": 80}
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", side_effect=[[job1], [job2]]), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
+         patch.object(llm, "run_llm", side_effect=[json.dumps([scored1]), json.dumps([scored2])]):
+        first = pipeline.run_pipeline()   # job1 is new
+        second = pipeline.run_pipeline()  # job1 no longer scraped, job2 is new
+
+    assert first["new_count"] == 1
+    assert second["new_count"] == 1  # only job2
+
+    jobs_json = json.loads((tmp_path / "output/jobs.json").read_text())
+    assert scored1 in jobs_json
+    assert scored2 in jobs_json
+    assert len(jobs_json) == 2
+
+
+def test_run_pipeline_merges_history_into_jobs_json(tmp_path, monkeypatch):
+    """A job scored in a previous run that this run's scrape doesn't turn up
+    again must survive in output/jobs.json as history, alongside this run's
+    freshly-scored job — while the per-run snapshot stays this-run-only."""
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    old_job = {"title": "Old Dev", "url": "https://example.com/old", "score": 75,
+               "verdict": "apply", "match_reasons": [], "red_flags": [], "suggested_angle": ""}
+    (tmp_path / "output/jobs.json").write_text(json.dumps([old_job]))
+
+    mock_config = {"search_queries": ["q"]}
+    mock_raw_jobs = [{"title": "New Dev", "company": "Co", "location": "Remote",
+                      "url": "https://example.com/new", "description": "",
+                      "posted_date": "", "source": "example.com"}]
+    new_scored = {"title": "New Dev", "url": "https://example.com/new", "score": 88,
+                  "verdict": "apply", "match_reasons": [], "red_flags": [], "suggested_angle": ""}
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
+         patch.object(pipeline, "analyze_jobs", return_value=[new_scored]):
+        result = pipeline.run_pipeline()
+
+    jobs_json = json.loads((tmp_path / "output/jobs.json").read_text())
+    assert old_job in jobs_json
+    assert new_scored in jobs_json
+    assert len(jobs_json) == 2
+
+    # The per-run snapshot only ever reflects this run's newly-scored jobs.
+    run_dir_jobs = json.loads((Path(result["run_dir"]) / "jobs.json").read_text())
+    assert run_dir_jobs == [new_scored]
+
+
+def test_run_pipeline_merges_api_jobs_with_scraped_jobs(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    mock_config = {"search_queries": ["q"]}
+    scraped_job = {"title": "Scraped Dev", "company": "Co", "location": "Remote",
+                   "url": "https://example.com/scraped", "description": "",
+                   "posted_date": "", "source": "example.com"}
+    api_job = {"title": "API Dev", "company": "ApiCo", "location": "Remote",
+               "url": "https://remotive.com/remote-jobs/api-dev", "description": "",
+               "posted_date": "", "source": "remotive.com"}
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=[scraped_job]), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[api_job]), \
+         patch.object(pipeline, "analyze_jobs", return_value=[]) as mock_analyze:
+        pipeline.run_pipeline()
+
+    # Merged into output/raw_jobs.json (and the per-run snapshot) exactly
+    # like a scraped job.
+    raw_jobs = json.loads((tmp_path / "output/raw_jobs.json").read_text())
+    assert scraped_job in raw_jobs
+    assert api_job in raw_jobs
+
+    # And merged before the seen.json partition, so it's sent to the LLM
+    # like any other newly-discovered job.
+    sent_to_llm = mock_analyze.call_args[0][0]
+    assert scraped_job in sent_to_llm
+    assert api_job in sent_to_llm
 
 
 def test_run_pipeline_only_sends_new_jobs_to_llm(tmp_path, monkeypatch):
@@ -261,6 +372,7 @@ def test_run_pipeline_only_sends_new_jobs_to_llm(tmp_path, monkeypatch):
 
     with patch.object(pipeline, "build_search_config", return_value=mock_config), \
          patch.object(pipeline, "scrape_jobs", return_value=[seen_job, new_job]), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
          patch.object(llm, "run_llm", return_value="[]") as mock_run_llm:
         result = pipeline.run_pipeline()
 
@@ -277,6 +389,7 @@ def test_load_config_returns_defaults_without_file(tmp_path, monkeypatch):
     cfg = config.load_config()
     assert "linkedin.com/jobs" in cfg["job_boards"]
     assert any(g["name"] == "Community" for g in cfg["reddit_groups"])
+    assert cfg["api_sources"] == ["remotive.com", "remoteok.com", "arbeitnow.com"]
 
 
 def test_load_config_overrides_from_file(tmp_path, monkeypatch):

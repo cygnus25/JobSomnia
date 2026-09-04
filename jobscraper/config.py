@@ -46,6 +46,10 @@ DEFAULT_CONFIG = {
         "jobstreet.com": 4,
         "onlinejobs.ph": 4,
     },
+    # Free public job-board APIs (jobscraper/sources_api.py) queried
+    # alongside Firecrawl search+scrape. [] disables API sourcing entirely;
+    # config.json can list a subset to query only some of them.
+    "api_sources": ["remotive.com", "remoteok.com", "arbeitnow.com"],
 }
 
 
