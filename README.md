@@ -79,6 +79,23 @@ schtasks /create /tn "AI Job Scraper" /tr "cmd /c cd /d C:\path\to\ai-job-scrape
 0 8 * * * cd /path/to/ai-job-scraper && /usr/bin/python3 -m jobscraper.schedule >> output/schedule.log 2>&1
 ```
 
+**Hermes Agent (cronjob)** — run daily at 8am and have the Hermes agent deliver
+the summary to your chat (Telegram/Discord/desktop — wherever the profile is
+connected). The job runs the pipeline via its script, then the agent reads the
+output and posts a digest of new high-scoring jobs:
+
+```bash
+hermes cron add \
+  --name "JobScraper daily digest" \
+  --schedule "every day at 8am" \
+  --script scripts/jobscraper-run.py \
+  --workdir "C:/Users/ysera/Documents/apply/JobScraper/ai-job-scraper"
+```
+
+The script captures `python -m jobscraper.schedule` output; the agent turns it
+into a readable digest (top jobs with links, new-vs-seen counts). Use
+`hermes cron list` to verify and `hermes cron run <id>` to test-fire once.
+
 ## Tests
 
 ```bash
