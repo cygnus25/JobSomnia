@@ -1,4 +1,4 @@
-# AI Job Hunt Agent
+# JobSomnia
 
 An autonomous job-hunting pipeline. It reads your resume, searches the web for matching remote roles, and scores each posting against your actual profile with an LLM. Results show up in a local web dashboard.
 
