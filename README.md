@@ -89,7 +89,7 @@ hermes cron add \
   --name "JobScraper daily digest" \
   --schedule "every day at 8am" \
   --script scripts/jobscraper-run.py \
-  --workdir "C:/Users/ysera/Documents/apply/JobScraper/ai-job-scraper"
+  --workdir /path/to/ai-job-scraper
 ```
 
 The script captures `python -m jobscraper.schedule` output; the agent turns it
