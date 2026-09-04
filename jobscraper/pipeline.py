@@ -128,18 +128,21 @@ def _load_jobs() -> list[dict]:
     return []
 
 
-def _merge_jobs(previous: list[dict], scraped: list[dict], new: list[dict]) -> list[dict]:
+def _merge_jobs(previous: list[dict], new: list[dict]) -> list[dict]:
     """Build the next output/jobs.json: history + this run's fresh scores.
 
     History is every job in `previous` (output/jobs.json before this run)
-    whose URL isn't among `scraped` (this run's raw jobs — scrape + API
-    sources) — postings that simply didn't turn up this run are kept as-is
-    (score, verdict, etc. preserved) so the dashboard doesn't lose them.
-    `new` is this run's analyze_jobs() output, appended after. A previous
-    entry missing a url (malformed LLM output) is kept unconditionally,
-    since it can't be matched against `scraped` either way."""
-    scraped_keys = {dedup_key(job["url"]) for job in scraped if job.get("url")}
-    history = [j for j in previous if not j.get("url") or dedup_key(j["url"]) not in scraped_keys]
+    whose URL isn't freshly re-scored in `new` this run. A prior-scored job
+    that turns up again in `scraped` but isn't re-analyzed (already in
+    seen.json) keeps its prior score — it's still a live posting. Only
+    postings that stop turning up entirely are kept as untouched history,
+    and entries missing a url (malformed LLM output) are kept
+    unconditionally, since they can't be matched at all."""
+    new_keys = {dedup_key(j["url"]) for j in new if j.get("url")}
+    history = [
+        j for j in previous
+        if not j.get("url") or dedup_key(j["url"]) not in new_keys
+    ]
     return history + new
 
 
@@ -211,7 +214,7 @@ def run_pipeline(on_progress=None) -> dict:
     all_jobs = analyze_jobs(new_jobs)
     (run_dir / "jobs.json").write_text(json.dumps(all_jobs, indent=2))
     (ROOT / "output/jobs.json").write_text(
-        json.dumps(_merge_jobs(previously_scored, jobs, all_jobs), indent=2))
+        json.dumps(_merge_jobs(previously_scored, all_jobs), indent=2))
     emit(3, "Analyzing & scoring", "done")
 
     today = datetime.now().strftime("%Y-%m-%d")
