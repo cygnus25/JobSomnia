@@ -59,6 +59,26 @@ python agent.py
 
 Results land in `output/` (gitignored): `jobs.json` (scored jobs) and `raw_jobs.json` (everything scraped).
 
+## Scheduled runs
+
+For a hands-off daily run, `jobscraper/schedule.py` runs the full pipeline and prints a plain-text summary to stdout (run time, raw jobs scraped, new jobs, jobs scoring above the threshold, and up to 5 top-scoring jobs) — ideal for a scheduler to capture in a log. It exits with code 1 on failure so the scheduler can flag the run.
+
+```bash
+python -m jobscraper.schedule
+```
+
+**Windows (Task Scheduler)** — create a daily 8am task with `schtasks`:
+
+```powershell
+schtasks /create /tn "AI Job Scraper" /tr "cmd /c cd /d C:\path\to\ai-job-scraper && python -m jobscraper.schedule >> output\schedule.log 2>&1" /sc daily /st 08:00
+```
+
+**Linux/macOS (cron)** — run daily at 8am, appending output to a log file:
+
+```cron
+0 8 * * * cd /path/to/ai-job-scraper && /usr/bin/python3 -m jobscraper.schedule >> output/schedule.log 2>&1
+```
+
 ## Tests
 
 ```bash
@@ -69,7 +89,7 @@ pytest
 
 ```
 agent.py          # CLI shim (the pipeline lives in jobscraper/)
-jobscraper/       # config, llm (HTTP), scrape, pipeline
+jobscraper/       # config, llm (HTTP), scrape, pipeline, schedule (scheduled/cron entrypoint)
 config.json       # search sources: job boards + Reddit subreddit groups
 server.py         # FastAPI: /api/jobs, /api/status, /api/run (SSE)
 ui/index.html     # single-file dashboard

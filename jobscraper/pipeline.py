@@ -172,8 +172,13 @@ def run_pipeline(on_progress=None) -> dict:
     existing output/ writes.
 
     Returns {"total", "above_threshold", "new_count", "new_above_threshold",
-    "run_dir"} describing this run's newly-scored jobs (not the accumulated
-    output/jobs.json total). Raises RuntimeError on any failure.
+    "raw_total", "top_jobs", "run_dir"} describing this run's newly-scored
+    jobs (not the accumulated output/jobs.json total). "raw_total" is the
+    count of raw jobs scraped/fetched this run (new + already-seen).
+    "top_jobs" is up to the 5 highest-scoring jobs from this run's newly
+    analyzed jobs, each as {"title", "company", "score", "url"} — used by
+    jobscraper/schedule.py to build its notification summary. Raises
+    RuntimeError on any failure.
     """
     def emit(step, label, status):
         if on_progress:
@@ -222,11 +227,22 @@ def run_pipeline(on_progress=None) -> dict:
     (ROOT / "output/seen.json").write_text(json.dumps(seen, indent=2))
 
     good_jobs = [j for j in all_jobs if j.get("score", 0) >= THRESHOLD]
+    top_jobs = sorted(all_jobs, key=lambda j: j.get("score", 0), reverse=True)[:5]
     return {
         "total": len(all_jobs),
         "above_threshold": len(good_jobs),
         "new_count": len(new_jobs),
         "new_above_threshold": len(good_jobs),
+        "raw_total": len(jobs),
+        "top_jobs": [
+            {
+                "title": j.get("title", ""),
+                "company": j.get("company", ""),
+                "score": j.get("score", 0),
+                "url": j.get("url", ""),
+            }
+            for j in top_jobs
+        ],
         "run_dir": str(run_dir),
     }
 

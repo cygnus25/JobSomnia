@@ -383,6 +383,70 @@ def test_run_pipeline_only_sends_new_jobs_to_llm(tmp_path, monkeypatch):
     assert "https://example.com/old" not in context
 
 
+def test_run_pipeline_includes_raw_total_and_top_jobs(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    mock_config = {"search_queries": ["q"]}
+    mock_raw_jobs = [
+        {"title": "Dev A", "company": "Co", "location": "Remote",
+         "url": "https://example.com/a", "description": "", "posted_date": "", "source": "example.com"},
+        {"title": "Dev B", "company": "Co", "location": "Remote",
+         "url": "https://example.com/b", "description": "", "posted_date": "", "source": "example.com"},
+    ]
+    mock_analyzed = [
+        {"title": "Dev A", "company": "Co", "url": "https://example.com/a", "score": 60,
+         "verdict": "maybe", "match_reasons": [], "red_flags": [], "suggested_angle": ""},
+        {"title": "Dev B", "company": "Co", "url": "https://example.com/b", "score": 95,
+         "verdict": "apply", "match_reasons": [], "red_flags": [], "suggested_angle": ""},
+    ]
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
+         patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
+        result = pipeline.run_pipeline()
+
+    assert result["raw_total"] == 2
+    # Sorted by score descending, highest first.
+    assert [j["url"] for j in result["top_jobs"]] == [
+        "https://example.com/b", "https://example.com/a",
+    ]
+    assert result["top_jobs"][0] == {
+        "title": "Dev B", "company": "Co", "score": 95, "url": "https://example.com/b",
+    }
+
+
+def test_run_pipeline_top_jobs_capped_at_five(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    mock_config = {"search_queries": ["q"]}
+    mock_raw_jobs = [
+        {"title": f"Dev {i}", "company": "Co", "location": "Remote",
+         "url": f"https://example.com/{i}", "description": "", "posted_date": "", "source": "example.com"}
+        for i in range(7)
+    ]
+    mock_analyzed = [
+        {"title": f"Dev {i}", "company": "Co", "url": f"https://example.com/{i}", "score": i * 10,
+         "verdict": "apply", "match_reasons": [], "red_flags": [], "suggested_angle": ""}
+        for i in range(7)
+    ]
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
+         patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
+        result = pipeline.run_pipeline()
+
+    assert len(result["top_jobs"]) == 5
+    assert [j["score"] for j in result["top_jobs"]] == [60, 50, 40, 30, 20]
+
+
 def test_load_config_returns_defaults_without_file(tmp_path, monkeypatch):
     import jobscraper.config as config
     monkeypatch.setattr(config, "ROOT", tmp_path)
