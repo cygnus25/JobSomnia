@@ -76,6 +76,10 @@ def _dedup_key(url: str) -> str:
     return f"{_canonical_host(p.netloc)}{p.path}?{p.query}"
 
 
+# Public alias — pipeline.py uses this as the cross-run key in output/seen.json.
+dedup_key = _dedup_key
+
+
 def discover_pages(app: "FirecrawlApp", search_queries: list[str]) -> list[dict]:
     """Run each search query and return unique candidate pages.
 

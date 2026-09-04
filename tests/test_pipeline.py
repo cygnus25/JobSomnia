@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import pytest
@@ -141,7 +142,11 @@ def test_run_pipeline_emits_all_step_events(tmp_path, monkeypatch):
     assert (2, "done") in step_statuses
     assert (3, "running") in step_statuses
     assert (3, "done") in step_statuses
-    assert result == {"total": 1, "above_threshold": 1}
+    assert result["total"] == 1
+    assert result["above_threshold"] == 1
+    assert result["new_count"] == 1
+    assert result["new_above_threshold"] == 1
+    assert Path(result["run_dir"]).is_dir()
 
 
 def test_run_pipeline_raises_when_resume_missing(tmp_path, monkeypatch):
@@ -172,6 +177,98 @@ def test_run_pipeline_works_without_callback(tmp_path, monkeypatch):
 
     assert result["total"] == 1
     assert result["above_threshold"] == 0
+
+
+def test_run_pipeline_writes_run_history(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    mock_config = {"search_queries": ["q"]}
+    mock_raw_jobs = [{"title": "Dev", "company": "Co", "location": "Remote",
+                      "url": "https://example.com", "description": "",
+                      "posted_date": "", "source": "example.com"}]
+    mock_analyzed = [{"title": "Dev", "url": "https://example.com", "score": 85,
+                      "verdict": "apply", "match_reasons": [], "red_flags": [],
+                      "suggested_angle": ""}]
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
+        result = pipeline.run_pipeline()
+
+    run_dir = Path(result["run_dir"])
+    assert run_dir.is_dir()
+    assert run_dir.parent == tmp_path / "output" / "runs"
+    assert json.loads((run_dir / "search_config.json").read_text()) == mock_config
+    assert json.loads((run_dir / "raw_jobs.json").read_text()) == mock_raw_jobs
+    assert json.loads((run_dir / "jobs.json").read_text()) == mock_analyzed
+
+
+def test_run_pipeline_second_run_scores_zero_when_all_seen(tmp_path, monkeypatch):
+    import jobscraper.llm as llm
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts/analyze.md").write_text("analyze")
+
+    mock_config = {"search_queries": ["q"]}
+    mock_raw_jobs = [{"title": "Dev", "company": "Co", "location": "Remote",
+                      "url": "https://example.com", "description": "",
+                      "posted_date": "", "source": "example.com"}]
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(llm, "run_llm", return_value=json.dumps([{"title": "Dev", "score": 90}])) as mock_run_llm:
+        first = pipeline.run_pipeline()
+        second = pipeline.run_pipeline()
+
+    assert first["new_count"] == 1
+    assert second["new_count"] == 0
+    assert second["total"] == 0
+    assert second["above_threshold"] == 0
+    assert mock_run_llm.call_count == 1  # the second run never calls the LLM to score anything
+
+
+def test_run_pipeline_only_sends_new_jobs_to_llm(tmp_path, monkeypatch):
+    import jobscraper.llm as llm
+    import jobscraper.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts/analyze.md").write_text("analyze")
+
+    mock_config = {"search_queries": ["q"]}
+    seen_job = {"title": "Old", "company": "Co", "location": "Remote",
+                "url": "https://example.com/old", "description": "",
+                "posted_date": "", "source": "example.com"}
+    new_job = {"title": "New", "company": "Co", "location": "Remote",
+               "url": "https://example.com/new", "description": "",
+               "posted_date": "", "source": "example.com"}
+
+    # Seed output/seen.json so `seen_job` is already known from a prior run.
+    seen_record = {
+        pipeline.dedup_key(seen_job["url"]): {
+            "url": seen_job["url"], "title": seen_job["title"],
+            "first_seen": "2024-01-01", "last_seen": "2024-01-01", "runs_seen": 1,
+        }
+    }
+    (tmp_path / "output/seen.json").write_text(json.dumps(seen_record))
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=[seen_job, new_job]), \
+         patch.object(llm, "run_llm", return_value="[]") as mock_run_llm:
+        result = pipeline.run_pipeline()
+
+    assert result["new_count"] == 1
+    mock_run_llm.assert_called_once()
+    context = mock_run_llm.call_args[0][1]
+    assert "https://example.com/new" in context
+    assert "https://example.com/old" not in context
 
 
 def test_load_config_returns_defaults_without_file(tmp_path, monkeypatch):
