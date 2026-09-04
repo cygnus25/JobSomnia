@@ -32,6 +32,20 @@ DEFAULT_CONFIG = {
             "extra_terms": "hiring",
         },
     ],
+    # Per-host page caps for stage 2 (scrape.py), keyed by canonical host.
+    # 0 drops the host entirely (Firecrawl can't scrape linkedin.com or
+    # reddit.com — see UNSCRAPABLE_HOSTS); others bound how many of that
+    # host's pages get scraped even within the global MAX_PAGES_TO_SCRAPE
+    # budget, so no single source can crowd out the rest.
+    "scrape_caps": {
+        "linkedin.com": 0,
+        "reddit.com": 0,
+        "glassdoor.com": 6,
+        "wellfound.com": 5,
+        "indeed.com": 5,
+        "jobstreet.com": 4,
+        "onlinejobs.ph": 4,
+    },
 }
 
 

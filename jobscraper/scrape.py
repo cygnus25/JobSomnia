@@ -8,6 +8,8 @@ from urllib.parse import urljoin, urlparse
 
 from firecrawl import FirecrawlApp
 
+from .config import load_config
+
 log = logging.getLogger(__name__)
 
 # Stage 2 (scrape) limits — a search hit is often a listing/category page
@@ -16,6 +18,11 @@ log = logging.getLogger(__name__)
 # number of pages scraped per run so credit usage stays bounded.
 MAX_PAGES_TO_SCRAPE = 20
 SCRAPE_TIMEOUT_MS = 120000  # listing pages (JobStreet, LinkedIn) are JS-heavy
+
+# Hosts Firecrawl's scrape() rejects outright ("Website Not Supported") —
+# canonical form. Scraping these just burns budget for a guaranteed failure,
+# so extract_postings() skips straight to the search-snippet fallback.
+UNSCRAPABLE_HOSTS = {"linkedin.com", "reddit.com"}
 
 # What Firecrawl should pull out of each scraped page.
 EXTRACT_PROMPT = (
@@ -126,6 +133,10 @@ def extract_postings(app: "FirecrawlApp", page: dict) -> list[dict]:
             "source": source,
         }]
 
+    if source in UNSCRAPABLE_HOSTS:
+        log.info(f"    Skipping scrape ({source} is unscrapable) — keeping search snippet")
+        return _snippet_fallback()
+
     try:
         doc = app.scrape(
             listing_url,
@@ -161,11 +172,32 @@ def extract_postings(app: "FirecrawlApp", page: dict) -> list[dict]:
     return postings or _snippet_fallback()
 
 
+def _apply_scrape_caps(pages: list[dict], scrape_caps: dict) -> list[dict]:
+    """Drop pages whose canonical host has a cap of 0, and cap every other
+    host at its configured number of pages (config.json "scrape_caps").
+    Hosts not listed keep the global MAX_PAGES_TO_SCRAPE limit, applied
+    afterwards in scrape_jobs(). Simple per-host counter — good enough since
+    page counts here are small (tens, not thousands)."""
+    host_counts: dict[str, int] = {}
+    capped = []
+    for page in pages:
+        host = _canonical_host(urlparse(page["url"]).netloc)
+        cap = scrape_caps.get(host, MAX_PAGES_TO_SCRAPE)
+        if host_counts.get(host, 0) >= cap:
+            continue
+        host_counts[host] = host_counts.get(host, 0) + 1
+        capped.append(page)
+    return capped
+
+
 def scrape_jobs(search_queries: list[str]) -> list[dict]:
     app = FirecrawlApp(api_key=os.environ["FIRECRAWL_API_KEY"])
+    scrape_caps = load_config().get("scrape_caps", {})
 
     pages = discover_pages(app, search_queries)
-    log.info(f"  Discovered {len(pages)} candidate pages; scraping up to {MAX_PAGES_TO_SCRAPE}...")
+    log.info(f"  Discovered {len(pages)} candidate pages")
+    pages = _apply_scrape_caps(pages, scrape_caps)
+    log.info(f"  {len(pages)} after per-host caps; scraping up to {MAX_PAGES_TO_SCRAPE}...")
 
     seen_urls: set[str] = set()
     jobs: list[dict] = []

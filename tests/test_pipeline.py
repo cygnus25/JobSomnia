@@ -1,6 +1,6 @@
 import json
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import pytest
 
 
@@ -52,6 +52,65 @@ def test_canonical_host_leaves_regular_domains_alone():
     assert scrape._canonical_host("onlinejobs.ph") == "onlinejobs.ph"
     assert scrape._canonical_host("glassdoor.co.uk") == "glassdoor.co.uk"
     assert scrape._canonical_host("reddit.com") == "reddit.com"
+
+
+def test_extract_postings_skips_scrape_for_unscrapable_hosts():
+    import jobscraper.scrape as scrape
+    page = {"url": "https://www.linkedin.com/jobs/view/123", "title": "Dev role", "description": "desc"}
+    fake_app = SimpleNamespace(scrape=Mock())
+
+    postings = scrape.extract_postings(fake_app, page)
+
+    fake_app.scrape.assert_not_called()
+    assert postings == [{
+        "title": "Dev role",
+        "company": "",
+        "location": "Remote",
+        "url": "https://www.linkedin.com/jobs/view/123",
+        "description": "desc",
+        "posted_date": "",
+        "source": "linkedin.com",
+    }]
+
+
+def test_scrape_jobs_drops_cap_zero_hosts(monkeypatch):
+    import jobscraper.scrape as scrape
+    pages = [
+        {"url": "https://www.linkedin.com/jobs/view/1", "title": "LI Job", "description": ""},
+        {"url": "https://indeed.com/viewjob?jk=1", "title": "Indeed Job", "description": ""},
+    ]
+    monkeypatch.setattr(scrape, "discover_pages", lambda app, queries: pages)
+    monkeypatch.setattr(scrape, "load_config", lambda: {"scrape_caps": {"linkedin.com": 0}})
+    fake_app = SimpleNamespace(scrape=Mock(return_value=SimpleNamespace(json={"jobs": []})))
+    monkeypatch.setattr(scrape, "FirecrawlApp", lambda api_key: fake_app)
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "test-key")
+
+    jobs = scrape.scrape_jobs(["q"])
+
+    urls = [j["url"] for j in jobs]
+    assert not any("linkedin.com" in u for u in urls)
+    assert any("indeed.com" in u for u in urls)
+    # linkedin.com is dropped before ever reaching extract_postings, so the
+    # only scrape() call made is for the surviving indeed.com page.
+    assert fake_app.scrape.call_count == 1
+
+
+def test_scrape_jobs_enforces_per_host_cap(monkeypatch):
+    import jobscraper.scrape as scrape
+    pages = [
+        {"url": f"https://indeed.com/viewjob?jk={i}", "title": f"Job {i}", "description": ""}
+        for i in range(8)
+    ]
+    monkeypatch.setattr(scrape, "discover_pages", lambda app, queries: pages)
+    monkeypatch.setattr(scrape, "load_config", lambda: {"scrape_caps": {"indeed.com": 5}})
+    fake_app = SimpleNamespace(scrape=Mock(return_value=SimpleNamespace(json={"jobs": []})))
+    monkeypatch.setattr(scrape, "FirecrawlApp", lambda api_key: fake_app)
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "test-key")
+
+    jobs = scrape.scrape_jobs(["q"])
+
+    assert fake_app.scrape.call_count == 5
+    assert len(jobs) == 5
 
 
 def test_run_pipeline_emits_all_step_events(tmp_path, monkeypatch):

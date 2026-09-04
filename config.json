@@ -15,5 +15,14 @@
       "subreddits": ["forhire", "digitalnomad", "remotework"],
       "extra_terms": "hiring"
     }
-  ]
+  ],
+  "scrape_caps": {
+    "linkedin.com": 0,
+    "reddit.com": 0,
+    "glassdoor.com": 6,
+    "wellfound.com": 5,
+    "indeed.com": 5,
+    "jobstreet.com": 4,
+    "onlinejobs.ph": 4
+  }
 }
