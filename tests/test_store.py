@@ -76,6 +76,16 @@ def test_load_scored_jobs_preserves_full_llm_output(db):
     assert store.load_scored_jobs(db=db) == [scored]
 
 
+def test_start_run_fails_orphaned_running_runs(db):
+    orphan = store.start_run("2024-01-01 08:00:00", db=db)  # never finished (killed run)
+    store.start_run("2024-01-02 08:00:00", db=db)
+
+    runs = store.run_history(db=db)
+    assert [r["status"] for r in runs] == ["running", "failed"]  # newest first
+    assert runs[1]["id"] == orphan
+    assert runs[1]["finished_at"] == "2024-01-02 08:00:00"
+
+
 def test_run_history_roundtrip(db):
     ok_run = store.start_run("2024-01-01 08:00:00", db=db)
     store.finish_run(ok_run, "ok", raw_total=5, new_count=2, above_threshold=1,

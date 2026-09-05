@@ -72,6 +72,12 @@ def connect(db=None) -> sqlite3.Connection:
 def start_run(started_at: str, db=None) -> int:
     conn = connect(db)
     try:
+        # A run still marked 'running' here never finished (killed process)
+        # — close it out so run history can't show phantom live runs.
+        conn.execute(
+            "UPDATE runs SET status = 'failed', "
+            "finished_at = COALESCE(finished_at, ?) WHERE status = 'running'",
+            (started_at,))
         cur = conn.execute("INSERT INTO runs (started_at) VALUES (?)", (started_at,))
         conn.commit()
         return cur.lastrowid
