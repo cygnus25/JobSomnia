@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from jobscraper import store
 from jobscraper.pipeline import run_pipeline
 
 ROOT = Path(__file__).resolve().parents[0]
@@ -17,6 +18,7 @@ app = FastAPI()
 
 STATUS_FILE = ROOT / "output/status.json"
 JOBS_FILE = ROOT / "output/jobs.json"
+RUNS_DB = ROOT / "output/jobs.db"
 
 run_lock = threading.Lock()
 
@@ -46,6 +48,15 @@ async def get_jobs():
     for job in jobs:
         job["status"] = status.get(job.get("url", ""), "none")
     return JSONResponse(jobs)
+
+
+@app.get("/api/runs")
+async def get_runs():
+    """Recent pipeline runs from output/jobs.db (store.py), newest first —
+    a run-history view the jobs.json export can't provide."""
+    if not RUNS_DB.exists():
+        return JSONResponse([])
+    return JSONResponse(store.run_history(RUNS_DB))
 
 
 class StatusUpdate(BaseModel):

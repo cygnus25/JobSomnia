@@ -14,6 +14,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "ROOT", tmp_path)
     monkeypatch.setattr(server, "STATUS_FILE", tmp_path / "output" / "status.json")
     monkeypatch.setattr(server, "JOBS_FILE", tmp_path / "output" / "jobs.json")
+    monkeypatch.setattr(server, "RUNS_DB", tmp_path / "output" / "jobs.db")
     return TestClient(server.app)
 
 
@@ -69,3 +70,26 @@ def test_post_status_rejects_invalid_value(client):
     res = client.post("/api/status",
                       json={"url": "https://example.com", "status": "maybe"})
     assert res.status_code == 400
+
+
+def test_get_runs_returns_run_history(client, tmp_path):
+    import jobscraper.store as store
+    db = tmp_path / "output" / "jobs.db"
+    run_id = store.start_run("2024-01-01 08:00:00", db=db)
+    store.finish_run(run_id, "ok", raw_total=5, new_count=2, above_threshold=1,
+                     finished_at="2024-01-01 08:03:00", db=db)
+
+    res = client.get("/api/runs")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body) == 1
+    assert body[0]["status"] == "ok"
+    assert body[0]["new_count"] == 2
+    assert body[0]["above_threshold"] == 1
+
+
+def test_get_runs_empty_without_db(client):
+    res = client.get("/api/runs")
+    assert res.status_code == 200
+    assert res.json() == []

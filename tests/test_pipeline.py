@@ -344,31 +344,30 @@ def test_run_pipeline_merges_api_jobs_with_scraped_jobs(tmp_path, monkeypatch):
     assert api_job in sent_to_llm
 
 
-def test_run_pipeline_only_sends_new_jobs_to_llm(tmp_path, monkeypatch):
+def test_run_pipeline_only_sends_unscored_jobs_to_llm(tmp_path, monkeypatch):
     import jobscraper.llm as llm
     import jobscraper.pipeline as pipeline
+    import jobscraper.store as store
     monkeypatch.setattr(pipeline, "ROOT", tmp_path)
     (tmp_path / "resume.md").write_text("# Resume")
     (tmp_path / "output").mkdir()
     (tmp_path / "prompts").mkdir()
     (tmp_path / "prompts/analyze.md").write_text("analyze")
 
-    mock_config = {"search_queries": ["q"]}
     seen_job = {"title": "Old", "company": "Co", "location": "Remote",
                 "url": "https://example.com/old", "description": "",
                 "posted_date": "", "source": "example.com"}
     new_job = {"title": "New", "company": "Co", "location": "Remote",
                "url": "https://example.com/new", "description": "",
                "posted_date": "", "source": "example.com"}
+    mock_config = {"search_queries": ["q"]}
 
-    # Seed output/seen.json so `seen_job` is already known from a prior run.
-    seen_record = {
-        pipeline.dedup_key(seen_job["url"]): {
-            "url": seen_job["url"], "title": seen_job["title"],
-            "first_seen": "2024-01-01", "last_seen": "2024-01-01", "runs_seen": 1,
-        }
-    }
-    (tmp_path / "output/seen.json").write_text(json.dumps(seen_record))
+    # Seed the DB so seen_job was already scored in a prior run.
+    db = tmp_path / "output/jobs.db"
+    store.record_scores(
+        store.start_run("2024-01-01 00:00:00", db=db),
+        [{"title": "Old", "url": "https://example.com/old", "score": 60, "verdict": "skip"}],
+        "2024-01-01", db=db)
 
     with patch.object(pipeline, "build_search_config", return_value=mock_config), \
          patch.object(pipeline, "scrape_jobs", return_value=[seen_job, new_job]), \
@@ -381,6 +380,98 @@ def test_run_pipeline_only_sends_new_jobs_to_llm(tmp_path, monkeypatch):
     context = mock_run_llm.call_args[0][1]
     assert "https://example.com/new" in context
     assert "https://example.com/old" not in context
+
+
+def test_run_pipeline_resumes_after_crash_mid_scoring(tmp_path, monkeypatch):
+    """A run killed after batch 1 of 2 landed keeps that batch's scores and
+    dedupe state; the next run re-scores only the job whose batch never
+    returned, instead of re-billing everything."""
+    import jobscraper.llm as llm
+    import jobscraper.pipeline as pipeline
+    import jobscraper.store as store
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts/analyze.md").write_text("analyze")
+
+    mock_config = {"search_queries": ["q"]}
+    job1 = {"title": "Dev 1", "company": "Co", "location": "Remote",
+            "url": "https://example.com/1", "description": "",
+            "posted_date": "", "source": "example.com"}
+    job2 = {"title": "Dev 2", "company": "Co", "location": "Remote",
+            "url": "https://example.com/2", "description": "",
+            "posted_date": "", "source": "example.com"}
+    scored1 = {"title": "Dev 1", "url": "https://example.com/1", "score": 90}
+    scored2 = {"title": "Dev 2", "url": "https://example.com/2", "score": 80}
+
+    db = tmp_path / "output/jobs.db"
+    crashed_run = store.start_run("2024-01-01 00:00:00", db=db)
+    store.record_seen(crashed_run, [job1, job2], "2024-01-01", db=db)
+    store.record_scores(crashed_run, [scored1], "2024-01-01", db=db)
+    # ...and then the process dies: run never finished, batch 2 never ran.
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=[job1, job2]), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
+         patch.object(llm, "run_llm", return_value=json.dumps([scored2])) as mock_run_llm:
+        result = pipeline.run_pipeline()
+
+    assert result["new_count"] == 1  # only the unscored job2
+    mock_run_llm.assert_called_once()
+    context = mock_run_llm.call_args[0][1]
+    assert "https://example.com/2" in context
+    assert "https://example.com/1" not in context  # batch 1's score was kept — not re-billed
+
+    jobs_json = json.loads((tmp_path / "output/jobs.json").read_text())
+    assert scored1 in jobs_json and scored2 in jobs_json
+
+
+def test_run_pipeline_records_run_history(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    import jobscraper.store as store
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    mock_config = {"search_queries": ["q"]}
+    mock_raw_jobs = [{"title": "Dev", "company": "Co", "location": "Remote",
+                      "url": "https://example.com", "description": "",
+                      "posted_date": "", "source": "example.com"}]
+    mock_analyzed = [{"title": "Dev", "url": "https://example.com", "score": 85,
+                      "verdict": "apply", "match_reasons": [], "red_flags": [],
+                      "suggested_angle": ""}]
+
+    with patch.object(pipeline, "build_search_config", return_value=mock_config), \
+         patch.object(pipeline, "scrape_jobs", return_value=mock_raw_jobs), \
+         patch.object(pipeline, "fetch_api_jobs", return_value=[]), \
+         patch.object(pipeline, "analyze_jobs", return_value=mock_analyzed):
+        pipeline.run_pipeline()
+
+    runs = store.run_history(tmp_path / "output/jobs.db")
+    assert len(runs) == 1
+    assert runs[0]["status"] == "ok"
+    assert runs[0]["raw_total"] == 1
+    assert runs[0]["new_count"] == 1
+    assert runs[0]["above_threshold"] == 1
+    assert runs[0]["finished_at"]
+
+
+def test_run_pipeline_marks_failed_run_in_history(tmp_path, monkeypatch):
+    import jobscraper.pipeline as pipeline
+    import jobscraper.store as store
+    monkeypatch.setattr(pipeline, "ROOT", tmp_path)
+    (tmp_path / "resume.md").write_text("# Resume")
+    (tmp_path / "output").mkdir()
+
+    with patch.object(pipeline, "build_search_config",
+                      side_effect=RuntimeError("no queries")), \
+         pytest.raises(RuntimeError):
+        pipeline.run_pipeline()
+
+    runs = store.run_history(tmp_path / "output/jobs.db")
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["finished_at"]
 
 
 def test_run_pipeline_includes_raw_total_and_top_jobs(tmp_path, monkeypatch):
@@ -453,7 +544,11 @@ def test_load_config_returns_defaults_without_file(tmp_path, monkeypatch):
     cfg = config.load_config()
     assert "linkedin.com/jobs" in cfg["job_boards"]
     assert any(g["name"] == "Community" for g in cfg["reddit_groups"])
-    assert cfg["api_sources"] == ["remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz", "greenhouse", "lever", "adzuna"]
+    assert cfg["api_sources"] == [
+        "remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz",
+        "greenhouse", "lever", "adzuna",
+    ]
+    assert cfg["ats_boards"]["greenhouse"] == ["rocketlab"]
 
 
 def test_load_config_overrides_from_file(tmp_path, monkeypatch):
