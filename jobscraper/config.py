@@ -22,6 +22,7 @@ DEFAULT_CONFIG = {
         "glassdoor.com",
         "jobstreet.com",
         "onlinejobs.ph",
+        "seek.co.nz",
     ],
     "reddit_groups": [
         {"name": "Job boards", "subreddits": ["jobbit", "remotejobs", "WorkOnline"]},
@@ -45,6 +46,7 @@ DEFAULT_CONFIG = {
         "indeed.com": 5,
         "jobstreet.com": 4,
         "onlinejobs.ph": 4,
+        "seek.co.nz": 4,
     },
     # Free public job-board APIs (jobscraper/sources_api.py) queried
     # alongside Firecrawl search+scrape. [] disables API sourcing entirely;
