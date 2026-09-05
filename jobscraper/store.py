@@ -149,23 +149,25 @@ def record_seen(run_id: int, jobs: list[dict], today: str, db=None) -> None:
 
 
 def partition_new_jobs(jobs: list[dict], db=None) -> tuple[list[dict], list[dict]]:
-    """Split scraped jobs into those still needing an LLM score (never
-    scored in any run — including jobs recorded by a run that crashed
-    mid-scoring) and those already scored (skip: their results are in the
-    DB). Keying on scored-ness rather than mere seen-ness is what makes a
-    killed run recoverable instead of silently losing those jobs' scores."""
+    """Split scraped jobs into those still needing an LLM score and those
+    already scored-or-attempted (skip: the DB has their results, or the
+    scorer saw them in an earlier completed batch and omitted them —
+    analyze.md only returns jobs scoring >= THRESHOLD). Keying on
+    attempted-ness rather than mere seen-ness is what makes a killed run
+    recoverable: only batches that never returned get re-billed."""
     from .scrape import dedup_key
 
     conn = connect(db)
     try:
-        scored = {r["dedup_key"] for r in
-                  conn.execute("SELECT dedup_key FROM jobs WHERE data IS NOT NULL")}
+        attempted = {r["dedup_key"] for r in conn.execute(
+            "SELECT dedup_key FROM jobs WHERE data IS NOT NULL "
+            "OR last_scored_run IS NOT NULL")}
     finally:
         conn.close()
     to_score, already_scored = [], []
     for job in jobs:
         key = dedup_key(job.get("url") or "")
-        target = already_scored if key in scored else to_score
+        target = already_scored if key in attempted else to_score
         target.append(job)
     return to_score, already_scored
 
@@ -181,7 +183,13 @@ def record_scores(run_id: int, scored_jobs: list[dict], today: str, db=None,
     position) so scored-ness keys on the job we actually scraped, not on
     the LLM reliably echoing its url — a dropped url must not cause the
     job to be re-billed on every run. Rows are keyed by the input job's
-    url; result JSON is stored verbatim."""
+    url; result JSON is stored verbatim.
+
+    Every batch input is marked last_scored_run — with a result when it
+    has one, without when the scorer omitted it (sub-threshold jobs are
+    deliberately not returned by analyze.md). Only inputs of batches that
+    never returned stay unmarked, so alone they get re-scored after a
+    crash."""
     from .scrape import dedup_key
 
     inputs = list(batch_inputs or [])
@@ -206,6 +214,7 @@ def record_scores(run_id: int, scored_jobs: list[dict], today: str, db=None,
 
     conn = connect(db)
     try:
+        matched_keys: set[str] = set()
         for idx, result in enumerate(scored_jobs):
             match = _match(result)
             if match is None and idx < len(inputs):
@@ -213,6 +222,7 @@ def record_scores(run_id: int, scored_jobs: list[dict], today: str, db=None,
             url = (match or {}).get("url") or result.get("url") or ""
             if not url:
                 continue  # can't be deduped; stays in this run's in-memory results only
+            matched_keys.add(dedup_key(url))
             score = result.get("score")
             try:
                 score = float(score) if score is not None else None
@@ -246,6 +256,15 @@ def record_scores(run_id: int, scored_jobs: list[dict], today: str, db=None,
                  result.get("salary") or (match or {}).get("salary", ""),
                  score, result.get("verdict", ""), json.dumps(result), today, today,
                  run_id, run_id, run_id))
+        for inp in inputs:
+            # Mark inputs the scorer omitted (sub-threshold) as attempted
+            # so they aren't re-billed on every run.
+            url = inp.get("url") or ""
+            if not url or dedup_key(url) in matched_keys:
+                continue
+            conn.execute(
+                "UPDATE jobs SET last_scored_run = ?, last_seen_run = ?, last_seen = ? "
+                "WHERE dedup_key = ?", (run_id, run_id, today, dedup_key(url)))
         conn.commit()
     finally:
         conn.close()

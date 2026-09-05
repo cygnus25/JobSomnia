@@ -16,6 +16,24 @@ def _job(url, title="Dev", company="Co"):
             "description": "", "posted_date": "", "source": "example.com"}
 
 
+def test_record_scores_marks_omitted_inputs_as_attempted(db):
+    """analyze.md only returns jobs scoring >= threshold — a batch input
+    the scorer omitted counts as attempted (seen by the LLM in a completed
+    batch) and must not be re-billed on every run."""
+    run_id = store.start_run("2024-01-01", db=db)
+    kept = _job("https://example.com/kept")
+    omitted = _job("https://example.com/omitted")
+    store.record_seen(run_id, [kept, omitted], "2024-01-01", db=db)
+
+    store.record_scores(run_id, [{"title": "Dev", "url": kept["url"], "score": 85}],
+                        "2024-01-01", db=db, batch_inputs=[kept, omitted])
+
+    to_score, already = store.partition_new_jobs([kept, omitted], db=db)
+    assert (to_score, already) == ([], [kept, omitted])
+    assert store.load_scored_jobs(db=db) == [
+        {"title": "Dev", "url": kept["url"], "score": 85}]  # only the returned result
+
+
 def test_record_seen_makes_job_scoreable_then_scored(db):
     run_id = store.start_run("2024-01-01 08:00:00", db=db)
     job = _job("https://example.com/1")
