@@ -49,7 +49,18 @@ DEFAULT_CONFIG = {
     # Free public job-board APIs (jobscraper/sources_api.py) queried
     # alongside Firecrawl search+scrape. [] disables API sourcing entirely;
     # config.json can list a subset to query only some of them.
-    "api_sources": ["remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz"],
+    "api_sources": [
+        "remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz",
+        "greenhouse", "lever",
+    ],
+    # ATS watchlists for the api_sources entries "greenhouse" and "lever":
+    # company board tokens (boards-api.greenhouse.io/v1/boards/{token}) and
+    # company slugs (api.lever.co/v0/postings/{slug}). Discover tokens via
+    # a company's jobs page URL or an ATS-finder tool.
+    "ats_boards": {
+        "greenhouse": ["rocketlab"],
+        "lever": ["newzealandtradeandenterprise", "clearpoint", "kpmgnz", "enable"],
+    },
 }
 
 

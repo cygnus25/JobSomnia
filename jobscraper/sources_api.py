@@ -15,6 +15,9 @@ import json
 import logging
 import re
 import urllib.request
+from datetime import datetime, timezone
+from html import unescape
+from itertools import zip_longest
 
 from .config import load_config
 
@@ -52,6 +55,20 @@ def _strip_html(text: str) -> str:
     """Strip HTML tags from `text` (RemoteOK descriptions are HTML),
     collapsing the whitespace left behind."""
     return _WS_RE.sub(" ", _TAG_RE.sub(" ", text or "")).strip()
+
+
+def _html_to_text(markup: str) -> str:
+    """HTML -> plain text. Greenhouse's `content` field ships HTML-escaped
+    (&lt;p&gt;), so unescape before stripping tags and again for entities
+    inside the text that survive stripping."""
+    return unescape(_strip_html(unescape(markup or "")))
+
+
+def _interleave_boards(board_jobs: list[list[dict]]) -> list[dict]:
+    """Round-robin merge per-board job lists (each already newest-first)
+    so fetch_api_jobs()'s per-source cap can't let one board crowd the
+    other configured boards out of the run."""
+    return [j for group in zip_longest(*board_jobs) for j in group if j]
 
 
 def _get_json(url: str):
@@ -150,6 +167,82 @@ def fetch_sjs() -> list[dict]:
     return fetch_sjs_capped()
 
 
+def fetch_greenhouse() -> list[dict]:
+    """Fetch postings from the Greenhouse boards listed in config's
+    "ats_boards" ("greenhouse" -> board tokens). Public no-auth API;
+    content=true adds the full description the LLM scorer reads. These
+    boards carry no structured salary — `salary` stays "" so the analyze
+    pass can extract pay from the description text."""
+    tokens = load_config().get("ats_boards", {}).get("greenhouse", [])
+    board_jobs: list[list[dict]] = []
+    for token in tokens:
+        try:
+            data = _get_json(
+                f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true")
+            jobs = []
+            for j in data.get("jobs", []):
+                url = j.get("absolute_url", "")
+                if not url:
+                    continue
+                jobs.append({
+                    "title": j.get("title", ""),
+                    "company": j.get("company_name") or token,
+                    "location": (j.get("location") or {}).get("name", ""),
+                    "url": url,
+                    "description": _html_to_text(j.get("content", "")),
+                    "posted_date": j.get("first_published") or j.get("updated_at") or "",
+                    "source": "greenhouse",
+                    "salary": "",
+                })
+            jobs.sort(key=lambda j: j["posted_date"], reverse=True)
+            board_jobs.append(jobs[:MAX_JOBS_PER_SOURCE])
+        except Exception as e:
+            log.info(f"  Greenhouse board {token!r} failed: {e}")
+    return _interleave_boards(board_jobs)
+
+
+def fetch_lever() -> list[dict]:
+    """Fetch postings from the Lever boards listed in config's "ats_boards"
+    ("lever" -> company slugs). Public no-auth API. No structured salary —
+    `salary` stays "" for the analyze pass to extract from descriptions."""
+    slugs = load_config().get("ats_boards", {}).get("lever", [])
+    board_jobs: list[list[dict]] = []
+    for slug in slugs:
+        try:
+            data = _get_json(f"https://api.lever.co/v0/postings/{slug}?mode=json")
+            jobs = []
+            for j in data if isinstance(data, list) else []:
+                url = j.get("hostedUrl") or j.get("applyUrl") or ""
+                if not url:
+                    continue
+                jobs.append({
+                    "title": j.get("text", ""),
+                    "company": slug,
+                    "location": (j.get("categories") or {}).get("location", ""),
+                    "url": url,
+                    "description": (j.get("descriptionPlain")
+                                    or j.get("descriptionBodyPlain")
+                                    or _html_to_text(j.get("descriptionBody") or "")),
+                    "posted_date": _epoch_ms_to_date(j.get("createdAt")),
+                    "source": "lever",
+                    "salary": "",
+                })
+            jobs.sort(key=lambda j: j["posted_date"], reverse=True)
+            board_jobs.append(jobs[:MAX_JOBS_PER_SOURCE])
+        except Exception as e:
+            log.info(f"  Lever board {slug!r} failed: {e}")
+    return _interleave_boards(board_jobs)
+
+
+def _epoch_ms_to_date(value) -> str:
+    """Lever's createdAt (epoch milliseconds) -> 'YYYY-MM-DD'; non-numeric
+    values pass through as strings."""
+    try:
+        return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return str(value or "")
+
+
 def fetch_api_jobs() -> list[dict]:
     """Fetch jobs from every source listed in config.json's "api_sources"
     (default: all three — see config.DEFAULT_CONFIG; [] disables API
@@ -164,6 +257,8 @@ def fetch_api_jobs() -> list[dict]:
         "remoteok.com": fetch_remoteok,
         "arbeitnow.com": fetch_arbeitnow,
         "sjs.co.nz": fetch_sjs,
+        "greenhouse": fetch_greenhouse,
+        "lever": fetch_lever,
     }
     jobs: list[dict] = []
     for name in load_config().get("api_sources", []):

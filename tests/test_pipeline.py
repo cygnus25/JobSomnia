@@ -453,7 +453,7 @@ def test_load_config_returns_defaults_without_file(tmp_path, monkeypatch):
     cfg = config.load_config()
     assert "linkedin.com/jobs" in cfg["job_boards"]
     assert any(g["name"] == "Community" for g in cfg["reddit_groups"])
-    assert cfg["api_sources"] == ["remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz"]
+    assert cfg["api_sources"] == ["remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz", "greenhouse", "lever"]
 
 
 def test_load_config_overrides_from_file(tmp_path, monkeypatch):

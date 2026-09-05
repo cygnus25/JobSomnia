@@ -25,5 +25,16 @@
     "jobstreet.com": 4,
     "onlinejobs.ph": 4
   },
-  "api_sources": ["remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz"]
+  "api_sources": [
+    "remotive.com",
+    "remoteok.com",
+    "arbeitnow.com",
+    "sjs.co.nz",
+    "greenhouse",
+    "lever"
+  ],
+  "ats_boards": {
+    "greenhouse": ["rocketlab"],
+    "lever": ["newzealandtradeandenterprise", "clearpoint", "kpmgnz", "enable"]
+  }
 }
