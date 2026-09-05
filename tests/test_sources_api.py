@@ -225,11 +225,10 @@ def test_fetch_greenhouse_sorts_newest_first_and_caps_per_board():
 def test_fetch_greenhouse_survives_one_dead_board():
     import jobscraper.sources_api as sources_api
     payload = {"jobs": [{"title": "OK", "absolute_url": "https://g.io/j/1"}]}
-    responses = iter([OSError("dead board"), _fake_response(payload)])
+    responses = [OSError("dead board"), _fake_response(payload)]
     with patch.object(sources_api, "load_config",
                       return_value={"ats_boards": {"greenhouse": ["dead", "alive"]}}), \
-         patch.object(sources_api.urllib.request, "urlopen",
-                      side_effect=lambda req, timeout=None: next(responses)):
+         patch.object(sources_api.urllib.request, "urlopen", side_effect=responses):
         jobs = sources_api.fetch_greenhouse()
 
     assert [j["title"] for j in jobs] == ["OK"]
