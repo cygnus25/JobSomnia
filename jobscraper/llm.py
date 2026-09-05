@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -21,6 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o-mini"
 TIMEOUT_S = 300
+
+# Transient gateway failures (the 9Router upstream blinks 502 "fetch
+# connect timeout (reset after 30s)" for a minute or so at a time) retry
+# with a fixed backoff instead of failing the whole run mid-scoring.
+RETRYABLE_HTTP_CODES = {429, 502, 503, 504}
+LLM_RETRIES = 3
+LLM_RETRY_BACKOFF_S = 30
 
 
 def _system_context() -> str:
@@ -68,15 +76,28 @@ def run_llm(prompt_file: str, context: str = "") -> str:
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-            body = resp.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", "replace")[:300]
-        log.error(f"LLM error {e.code}: {detail}")
-        raise RuntimeError(f"LLM request failed: HTTP {e.code}") from e
-    except OSError as e:
-        raise RuntimeError(f"LLM request failed: {e}") from e
+    body = None
+    for attempt in range(1, LLM_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+                body = resp.read().decode("utf-8", "replace")
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:300]
+            log.error(f"LLM error {e.code}: {detail}")
+            if e.code in RETRYABLE_HTTP_CODES and attempt < LLM_RETRIES:
+                log.info(f"  Transient LLM error ({e.code}) — retrying in "
+                         f"{LLM_RETRY_BACKOFF_S}s (attempt {attempt + 1}/{LLM_RETRIES})")
+                time.sleep(LLM_RETRY_BACKOFF_S)
+                continue
+            raise RuntimeError(f"LLM request failed: HTTP {e.code}") from e
+        except OSError as e:
+            if attempt < LLM_RETRIES:
+                log.info(f"  Transient LLM network error — retrying in "
+                         f"{LLM_RETRY_BACKOFF_S}s (attempt {attempt + 1}/{LLM_RETRIES})")
+                time.sleep(LLM_RETRY_BACKOFF_S)
+                continue
+            raise RuntimeError(f"LLM request failed: {e}") from e
 
     # Gateway quirk (verified live): the body can be a JSON object followed by
     # trailing SSE text ("...}\ndata: [DONE]\n\n"); json.loads fails on it.

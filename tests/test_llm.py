@@ -1,4 +1,5 @@
 import io
+import urllib.error
 import json
 from unittest.mock import patch
 import pytest
@@ -105,3 +106,49 @@ def test_run_claude_json_still_fails_loudly_on_no_json():
     with patch.object(llm, "run_llm", return_value="Sorry, I cannot do that."):
         with pytest.raises(RuntimeError, match="invalid JSON"):
             llm.run_claude_json("prompts/x.md")
+
+
+def _http_error(code, body=b"upstream error"):
+    return urllib.error.HTTPError("http://gw/chat/completions", code, "err",
+                                  {}, io.BytesIO(body))
+
+
+def test_run_llm_retries_transient_502_then_succeeds(tmp_path, monkeypatch):
+    import jobscraper.llm as llm
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    (tmp_path / "prompt.md").write_text("hello")
+    slept = []
+    monkeypatch.setattr(llm.time, "sleep", lambda s: slept.append(s))
+    responses = [_http_error(502),
+                 _fake_response({"choices": [{"message": {"content": "recovered"}}]})]
+    with patch.object(llm.urllib.request, "urlopen", side_effect=responses) as mock_open:
+        assert llm.run_llm("prompt.md") == "recovered"
+    assert mock_open.call_count == 2
+    assert slept == [llm.LLM_RETRY_BACKOFF_S]
+
+
+def test_run_llm_gives_up_after_retry_budget(tmp_path, monkeypatch):
+    import jobscraper.llm as llm
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    (tmp_path / "prompt.md").write_text("hello")
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    with patch.object(llm.urllib.request, "urlopen",
+                      side_effect=lambda req, timeout=None: (_ for _ in ()).throw(
+                          _http_error(503))):
+        with pytest.raises(RuntimeError, match="HTTP 503"):
+            llm.run_llm("prompt.md")
+
+
+def test_run_llm_does_not_retry_client_errors(tmp_path, monkeypatch):
+    import jobscraper.llm as llm
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    (tmp_path / "prompt.md").write_text("hello")
+    with patch.object(llm.urllib.request, "urlopen",
+                      side_effect=lambda req, timeout=None: (_ for _ in ()).throw(
+                          _http_error(401))) as mock_open:
+        with pytest.raises(RuntimeError, match="HTTP 401"):
+            llm.run_llm("prompt.md")
+    assert mock_open.call_count == 1
