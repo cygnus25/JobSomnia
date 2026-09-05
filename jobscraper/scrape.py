@@ -1,14 +1,18 @@
 # jobscraper/scrape.py
 """Stage 2: discover candidate pages via Firecrawl search, scrape each page,
 extract individual job postings, dedupe."""
+import json
 import logging
 import os
+import re
+import time
+from datetime import datetime
 from itertools import zip_longest
 from urllib.parse import urljoin, urlparse
 
 from firecrawl import FirecrawlApp
 
-from .config import load_config
+from .config import ROOT, load_config
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +27,17 @@ SCRAPE_TIMEOUT_MS = 120000  # listing pages (JobStreet, LinkedIn) are JS-heavy
 # canonical form. Scraping these just burns budget for a guaranteed failure,
 # so extract_postings() skips straight to the search-snippet fallback.
 UNSCRAPABLE_HOSTS = {"linkedin.com", "reddit.com"}
+
+# Hosts that failed this many scrapes in a row get persisted to
+# FAILED_HOSTS_FILE and demoted to snippet-only on later runs, so a newly
+# broken board stops burning JSON-scrape credits (5/page) every run.
+SCRAPE_FAILURES_BEFORE_SKIP = 3
+FAILED_HOSTS_FILE = ROOT / "output/failed_hosts.json"
+
+# 429 handling: Firecrawl returns Retry-After seconds; honor it once per
+# page, clamped so a bogus server value can't eat the 1200s run budget.
+RETRY_AFTER_DEFAULT_S = 20
+RETRY_AFTER_MAX_S = 60
 
 # What Firecrawl should pull out of each scraped page.
 EXTRACT_PROMPT = (
@@ -78,6 +93,72 @@ def _dedup_key(url: str) -> str:
 
 # Public alias — pipeline.py uses this as the cross-run key in output/seen.json.
 dedup_key = _dedup_key
+
+
+# ── failed-host demotion (output/failed_hosts.json) ──────────
+def _load_failed_hosts() -> dict:
+    try:
+        return json.loads(FAILED_HOSTS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_failed_hosts(hosts: dict) -> None:
+    try:
+        FAILED_HOSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        FAILED_HOSTS_FILE.write_text(json.dumps(hosts, indent=2))
+    except OSError as e:
+        log.info(f"  Could not persist failed-hosts map: {e}")
+
+
+def _record_scrape_failure(source: str) -> None:
+    """Bump `source`'s consecutive-failure count. At the threshold it is
+    demoted to snippet-only for future runs; any successful scrape clears
+    the record (see _record_scrape_success)."""
+    hosts = _load_failed_hosts()
+    record = hosts.setdefault(source, {})
+    record["consecutive_failures"] = record.get("consecutive_failures", 0) + 1
+    record["last_failure"] = datetime.now().strftime("%Y-%m-%d")
+    _save_failed_hosts(hosts)
+    if record["consecutive_failures"] >= SCRAPE_FAILURES_BEFORE_SKIP:
+        log.info(f"  {source} demoted to snippet-only after "
+                 f"{record['consecutive_failures']} failed scrapes")
+
+
+def _record_scrape_success(source: str) -> None:
+    hosts = _load_failed_hosts()
+    if source in hosts:
+        del hosts[source]
+        _save_failed_hosts(hosts)
+
+
+def _firecrawl_status(e: Exception) -> int | None:
+    """HTTP status of a Firecrawl error. The current SDK raises
+    FirecrawlError subclasses carrying .status_code; fall back to
+    requests-style .response and finally the message text so other SDK
+    versions still classify."""
+    status = getattr(e, "status_code", None)
+    if status is None:
+        resp = getattr(e, "response", None)
+        status = getattr(resp, "status_code", None)
+    if status is None:
+        m = re.search(r"\b(40\d|42\d)\b", str(e))
+        return int(m.group(1)) if m else None
+    try:
+        return int(status)
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_after_seconds(e: Exception) -> float:
+    """Retry-After header as seconds for a 429, clamped to [0, 60];
+    falls back to RETRY_AFTER_DEFAULT_S when absent or unparseable."""
+    resp = getattr(e, "response", None)
+    raw = resp.headers.get("Retry-After") if resp is not None else None
+    try:
+        return max(0.0, min(float(raw), RETRY_AFTER_MAX_S))
+    except (TypeError, ValueError):
+        return RETRY_AFTER_DEFAULT_S
 
 
 def discover_pages(app: "FirecrawlApp", search_queries: list[str]) -> list[dict]:
@@ -141,16 +222,51 @@ def extract_postings(app: "FirecrawlApp", page: dict) -> list[dict]:
         log.info(f"    Skipping scrape ({source} is unscrapable) — keeping search snippet")
         return _snippet_fallback()
 
-    try:
-        doc = app.scrape(
+    failures = _load_failed_hosts().get(source, {}).get("consecutive_failures", 0)
+    if failures >= SCRAPE_FAILURES_BEFORE_SKIP:
+        log.info(f"    Skipping scrape ({source} failed {failures} scrapes in a row "
+                 f"previously) — keeping search snippet")
+        return _snippet_fallback()
+
+    def _scrape():
+        return app.scrape(
             listing_url,
             formats=[{"type": "json", "prompt": EXTRACT_PROMPT, "schema": JOB_EXTRACT_SCHEMA}],
             only_main_content=True,
             timeout=SCRAPE_TIMEOUT_MS,
         )
+
+    try:
+        doc = _scrape()
     except Exception as e:
-        log.info(f"    Scrape failed ({source}): {e} — keeping search snippet")
-        return _snippet_fallback()
+        status = _firecrawl_status(e)
+        if status == 402:
+            raise RuntimeError(
+                "Firecrawl credits exhausted (HTTP 402) — aborting the run instead of "
+                "silently degrading every page to a search snippet. Top up at "
+                "firecrawl.dev/pricing or wait for the monthly reset.") from e
+        if status == 429:
+            wait = _retry_after_seconds(e)
+            log.info(f"    Rate limited (429) — sleeping {wait:.0f}s, retrying once")
+            time.sleep(wait)
+            try:
+                doc = _scrape()
+            except Exception as retry_err:
+                if _firecrawl_status(retry_err) == 402:
+                    raise RuntimeError(
+                        "Firecrawl credits exhausted (HTTP 402) — aborting the run "
+                        "instead of silently degrading every page to a search snippet. "
+                        "Top up at firecrawl.dev/pricing or wait for the monthly reset."
+                    ) from retry_err
+                log.info(f"    Retry failed ({source}): {retry_err} — keeping search snippet")
+                _record_scrape_failure(source)
+                return _snippet_fallback()
+        else:
+            log.info(f"    Scrape failed ({source}): {e} — keeping search snippet")
+            _record_scrape_failure(source)
+            return _snippet_fallback()
+
+    _record_scrape_success(source)
 
     data = doc.json if isinstance(doc.json, dict) else {}
     raw_postings = data.get("jobs") or []
