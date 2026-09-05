@@ -315,3 +315,83 @@ def test_fetch_api_jobs_dispatches_to_ats_fetchers():
     assert result == [{"url": "g"}, {"url": "l"}]
     mock_gh.assert_called_once()
     mock_lv.assert_called_once()
+
+
+def test_fetch_adzuna_parses_postings_and_marks_predicted_salaries():
+    import jobscraper.sources_api as sources_api
+    payload = {"results": [
+        {
+            "title": "Sous Chef",
+            "company": {"display_name": "Minimal Bar"},
+            "location": {"display_name": "Auckland Central"},
+            "redirect_url": "https://adzuna.co.nz/r/1",
+            "description": "Busy Ponsonby kitchen seeks a sous chef.",
+            "created": "2026-09-01T12:00:00Z",
+            "salary_min": 55000.0,
+            "salary_max": 65000.0,
+            "salary_is_predicted": 0,
+        },
+        {
+            "title": "Barista",
+            "company": {"display_name": "Corner Coffee"},
+            "location": {"display_name": "Wellington"},
+            "redirect_url": "https://adzuna.co.nz/r/2",
+            "description": "Weekend barista wanted.",
+            "created": "2026-09-02T12:00:00Z",
+            "salary_min": 48000.0,
+            "salary_max": 52000.0,
+            "salary_is_predicted": 1,
+        },
+    ]}
+    calls = []
+
+    def fake_get_json(url):
+        calls.append(url)
+        return payload
+
+    with patch.object(sources_api, "load_config", return_value={}), \
+         patch.dict("os.environ", {"ADZUNA_APP_ID": "id1", "ADZUNA_APP_KEY": "key1"}), \
+         patch.object(sources_api, "_get_json", side_effect=fake_get_json):
+        jobs = sources_api.fetch_adzuna()
+
+    assert "app_id=id1" in calls[0] and "app_key=key1" in calls[0]
+    assert "jobs/nz/search/1" in calls[0]
+    assert jobs == [
+        {
+            "title": "Sous Chef",
+            "company": "Minimal Bar",
+            "location": "Auckland Central",
+            "url": "https://adzuna.co.nz/r/1",
+            "description": "Busy Ponsonby kitchen seeks a sous chef.",
+            "posted_date": "2026-09-01T12:00:00Z",
+            "source": "adzuna",
+            "salary": "$55,000-$65,000",
+        },
+        {
+            "title": "Barista",
+            "company": "Corner Coffee",
+            "location": "Wellington",
+            "url": "https://adzuna.co.nz/r/2",
+            "description": "Weekend barista wanted.",
+            "posted_date": "2026-09-02T12:00:00Z",
+            "source": "adzuna",
+            "salary": "$48,000-$52,000 (est.)",
+        },
+    ]
+
+
+def test_fetch_adzuna_returns_empty_list_without_keys(monkeypatch):
+    import jobscraper.sources_api as sources_api
+    monkeypatch.delenv("ADZUNA_APP_ID", raising=False)
+    monkeypatch.delenv("ADZUNA_APP_KEY", raising=False)
+    with patch.object(sources_api, "_get_json") as mock_get:
+        assert sources_api.fetch_adzuna() == []
+    mock_get.assert_not_called()
+
+
+def test_fetch_adzuna_returns_empty_list_on_failure(monkeypatch):
+    import jobscraper.sources_api as sources_api
+    monkeypatch.setenv("ADZUNA_APP_ID", "id1")
+    monkeypatch.setenv("ADZUNA_APP_KEY", "key1")
+    with patch.object(sources_api, "_get_json", side_effect=OSError("boom")):
+        assert sources_api.fetch_adzuna() == []

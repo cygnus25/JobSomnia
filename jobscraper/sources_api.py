@@ -13,7 +13,9 @@ failing the run.
 """
 import json
 import logging
+import os
 import re
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from html import unescape
@@ -243,6 +245,57 @@ def _epoch_ms_to_date(value) -> str:
         return str(value or "")
 
 
+def fetch_adzuna() -> list[dict]:
+    """Fetch NZ postings from Adzuna's API (free key: ADZUNA_APP_ID /
+    ADZUNA_APP_KEY in .env — without them this source is off and returns
+    []). Query shape (what/where/max_days_old) comes from config's
+    "adzuna" section. Free tier: 25 hits/min, 250/day — one request per
+    run fits easily.
+
+    Adzuna models a salary range when the employer states none
+    (salary_is_predicted=1); those get " (est.)" appended so estimates
+    never masquerade as employer-stated pay."""
+    app_id = (os.environ.get("ADZUNA_APP_ID") or "").strip()
+    app_key = (os.environ.get("ADZUNA_APP_KEY") or "").strip()
+    if not app_id or not app_key:
+        log.info("  ADZUNA_APP_ID/ADZUNA_APP_KEY not set — skipping Adzuna")
+        return []
+    az = load_config().get("adzuna", {})
+    params = urllib.parse.urlencode({
+        "app_id": app_id,
+        "app_key": app_key,
+        "what": az.get("what", ""),
+        "where": az.get("where", ""),
+        "max_days_old": az.get("max_days_old", 14),
+        "results_per_page": az.get("results_per_page", MAX_JOBS_PER_SOURCE),
+        "sort_by": az.get("sort_by", "date"),
+    })
+    try:
+        data = _get_json(f"https://api.adzuna.com/v1/api/jobs/nz/search/1?{params}")
+        jobs = []
+        for j in data.get("results", []):
+            url = j.get("redirect_url", "")
+            if not url:
+                continue
+            salary = _format_salary_range(j.get("salary_min"), j.get("salary_max"))
+            if salary and j.get("salary_is_predicted"):
+                salary += " (est.)"
+            jobs.append({
+                "title": j.get("title", ""),
+                "company": (j.get("company") or {}).get("display_name") or "",
+                "location": (j.get("location") or {}).get("display_name") or "",
+                "url": url,
+                "description": j.get("description", ""),
+                "posted_date": j.get("created", ""),
+                "source": "adzuna",
+                "salary": salary,
+            })
+        return jobs
+    except Exception as e:
+        log.info(f"  Adzuna API failed: {e}")
+        return []
+
+
 def fetch_api_jobs() -> list[dict]:
     """Fetch jobs from every source listed in config.json's "api_sources"
     (default: all three — see config.DEFAULT_CONFIG; [] disables API
@@ -259,6 +312,7 @@ def fetch_api_jobs() -> list[dict]:
         "sjs.co.nz": fetch_sjs,
         "greenhouse": fetch_greenhouse,
         "lever": fetch_lever,
+        "adzuna": fetch_adzuna,
     }
     jobs: list[dict] = []
     for name in load_config().get("api_sources", []):

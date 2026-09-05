@@ -31,10 +31,12 @@
     "arbeitnow.com",
     "sjs.co.nz",
     "greenhouse",
-    "lever"
+    "lever",
+    "adzuna"
   ],
   "ats_boards": {
     "greenhouse": ["rocketlab"],
     "lever": ["newzealandtradeandenterprise", "clearpoint", "kpmgnz", "enable"]
-  }
+  },
+  "adzuna": { "what": "", "where": "", "max_days_old": 14 }
 }

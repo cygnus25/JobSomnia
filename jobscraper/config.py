@@ -49,9 +49,11 @@ DEFAULT_CONFIG = {
     # Free public job-board APIs (jobscraper/sources_api.py) queried
     # alongside Firecrawl search+scrape. [] disables API sourcing entirely;
     # config.json can list a subset to query only some of them.
+    # "adzuna" additionally needs ADZUNA_APP_ID/ADZUNA_APP_KEY in .env
+    # (free key from developer.adzuna.com) — without them it no-ops.
     "api_sources": [
         "remotive.com", "remoteok.com", "arbeitnow.com", "sjs.co.nz",
-        "greenhouse", "lever",
+        "greenhouse", "lever", "adzuna",
     ],
     # ATS watchlists for the api_sources entries "greenhouse" and "lever":
     # company board tokens (boards-api.greenhouse.io/v1/boards/{token}) and
@@ -61,6 +63,9 @@ DEFAULT_CONFIG = {
         "greenhouse": ["rocketlab"],
         "lever": ["newzealandtradeandenterprise", "clearpoint", "kpmgnz", "enable"],
     },
+    # Adzuna NZ query shape (api_sources entry "adzuna"): what/where blank
+    # = all of NZ, newest first; max_days_old keeps a daily run fresh.
+    "adzuna": {"what": "", "where": "", "max_days_old": 14},
 }
 
 
