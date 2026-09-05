@@ -33,6 +33,21 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
 
+def _format_salary_range(lo, hi) -> str:
+    """(60000, 80000) -> '$60,000-$80,000'; equal/one-sided/single values
+    collapse to one figure; '' when neither is a positive number."""
+    try:
+        lo_v, hi_v = float(lo or 0), float(hi or 0)
+    except (TypeError, ValueError):
+        return ""
+    if lo_v <= 0 and hi_v <= 0:
+        return ""
+    if lo_v > 0 and hi_v > 0 and lo_v != hi_v:
+        return f"${lo_v:,.0f}-${hi_v:,.0f}"
+    value = max(lo_v, hi_v)
+    return f"${value:,.0f}"
+
+
 def _strip_html(text: str) -> str:
     """Strip HTML tags from `text` (RemoteOK descriptions are HTML),
     collapsing the whitespace left behind."""
@@ -64,6 +79,7 @@ def fetch_remotive() -> list[dict]:
                 "description": j.get("description", ""),
                 "posted_date": j.get("publication_date", ""),
                 "source": "remotive.com",
+                "salary": (j.get("salary") or "").strip(),
             })
         return jobs
     except Exception as e:
@@ -94,6 +110,7 @@ def fetch_remoteok() -> list[dict]:
                 "description": _strip_html(j.get("description", "")),
                 "posted_date": j.get("date", ""),
                 "source": "remoteok.com",
+                "salary": _format_salary_range(j.get("salary_min"), j.get("salary_max")),
             })
         return jobs
     except Exception as e:
@@ -125,6 +142,14 @@ def fetch_arbeitnow() -> list[dict]:
         return []
 
 
+def fetch_sjs() -> list[dict]:
+    """Fetch NZ student postings from Student Job Search's (private) API —
+    live in jobscraper/sjs.py; kept thin here so tests can patch it the
+    same way as the other fetchers."""
+    from .sjs import fetch_sjs_capped
+    return fetch_sjs_capped()
+
+
 def fetch_api_jobs() -> list[dict]:
     """Fetch jobs from every source listed in config.json's "api_sources"
     (default: all three — see config.DEFAULT_CONFIG; [] disables API
@@ -138,6 +163,7 @@ def fetch_api_jobs() -> list[dict]:
         "remotive.com": fetch_remotive,
         "remoteok.com": fetch_remoteok,
         "arbeitnow.com": fetch_arbeitnow,
+        "sjs.co.nz": fetch_sjs,
     }
     jobs: list[dict] = []
     for name in load_config().get("api_sources", []):

@@ -34,6 +34,7 @@ def test_fetch_remotive_parses_jobs():
         "description": "<p>We need a backend engineer.</p>",
         "posted_date": "2024-05-01T12:00:00",
         "source": "remotive.com",
+        "salary": "",
     }]
 
 
@@ -61,6 +62,7 @@ def test_fetch_remoteok_skips_legal_notice_and_strips_html():
         "description": "Great backend role. Remote-first team.",
         "posted_date": "2024-05-02T08:00:00+00:00",
         "source": "remoteok.com",
+        "salary": "",
     }]
 
 

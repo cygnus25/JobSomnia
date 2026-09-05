@@ -19,6 +19,8 @@ Your entire response must be only the raw JSON array — no markdown fences, no 
   "title": "",
   "company": "",
   "url": "",
+  "location": "",
+  "salary": "",
   "score": 0,
   "verdict": "apply|review|skip",
   "match_reasons": [],
@@ -27,3 +29,6 @@ Your entire response must be only the raw JSON array — no markdown fences, no 
 }]
 
 suggested_angle: one sentence on how the candidate should frame their application for this specific role, based on their resume.
+location: the job's location, copied from the input job's location field (use "" only if missing).
+salary: the job's pay, copied from the input job's salary field if present (use "" if missing); if the input job has no salary field but the description states pay (e.g. "$25 per hour", "$60k-$70k plus benefits"), extract it concisely from the description; otherwise "".
+Never invent or estimate a salary that appears nowhere in the input.

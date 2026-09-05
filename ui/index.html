@@ -140,6 +140,10 @@
 
     /* verdict pill */
     .verdict-pill{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:2px 8px;border-radius:20px}
+
+    /* salary chip */
+    .salary-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;letter-spacing:.02em;padding:2px 8px;border-radius:20px;background:rgba(240,168,96,.12);color:var(--ember);border:1px solid rgba(240,168,96,.3)}
+    .salary-chip [data-lucide]{width:12px;height:12px}
     .verdict-apply{background:rgba(111,207,151,.12);color:var(--moss);border:1px solid rgba(111,207,151,.25)}
     .verdict-review{background:rgba(232,196,100,.12);color:var(--amber);border:1px solid rgba(232,196,100,.25)}
     .verdict-skip,.verdict-other{background:rgba(148,163,184,.08);color:var(--ink-3);border:1px solid var(--line)}
@@ -252,6 +256,8 @@
         <option value="score-desc">Score: High &#x2192; Low</option>
         <option value="score-asc">Score: Low &#x2192; High</option>
         <option value="company-asc">Company: A &#x2192; Z</option>
+        <option value="salary-desc">Salary: High &#x2192; Low</option>
+        <option value="location-asc">Location: A &#x2192; Z</option>
       </select>
       <span id="job-count" class="job-count-pill" aria-live="polite"></span>
     </div>
@@ -298,6 +304,14 @@
       if (!s || s === 'none') return 'applied';
       if (s === 'applied') return 'skipped';
       return 'none';
+    }
+
+    /* '$23.95-$28.00/hr' -> 28; '$60,000-$80,000' -> 80000; '' -> 0.
+       Compares the higher end — ranges rank by their ceiling. */
+    function salaryValue(job) {
+      const m = String(job.salary ?? '').replace(/,/g, '').match(/\$?([\d.]+)/g);
+      if (!m) return 0;
+      return Math.max(...m.map(parseFloat));
     }
 
     function collapse(label, items) {
@@ -426,6 +440,8 @@
       let jobs = allJobs.filter(function(j) { return verdict === 'all' || j.verdict === verdict; });
       if (sort === 'score-desc') jobs.sort(function(a, b) { return (b.score ?? 0) - (a.score ?? 0); });
       else if (sort === 'score-asc') jobs.sort(function(a, b) { return (a.score ?? 0) - (b.score ?? 0); });
+      else if (sort === 'salary-desc') jobs.sort(function(a, b) { return salaryValue(b) - salaryValue(a); });
+      else if (sort === 'location-asc') jobs.sort(function(a, b) { return (a.location ?? '').localeCompare(b.location ?? ''); });
       else jobs.sort(function(a, b) { return (a.company ?? '').localeCompare(b.company ?? ''); });
 
       document.getElementById('job-count').textContent =
@@ -451,7 +467,9 @@
           + '<div class="score-inner" style="color:' + color + '">' + esc(score) + '</div>'
           + '</div>'
           + '<div class="card-body">'
-          + '<div class="card-meta"><span class="verdict-pill ' + verdictClass(job.verdict) + '">' + esc(job.verdict ?? 'n/a') + '</span></div>'
+          + '<div class="card-meta"><span class="verdict-pill ' + verdictClass(job.verdict) + '">' + esc(job.verdict ?? 'n/a') + '</span>'
+          + (job.salary ? '<span class="salary-chip"><i data-lucide="banknote"></i>' + esc(job.salary) + '</span>' : '')
+          + '</div>'
           + '<h2 class="job-title">' + esc(job.title ?? '') + '</h2>'
           + '<p class="job-company">' + esc(job.company ?? '') + (job.location ? ' \u00b7 ' + esc(job.location) : '') + '</p>'
           + '</div>'
