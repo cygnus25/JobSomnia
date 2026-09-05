@@ -17,6 +17,7 @@ import sys
 from datetime import datetime
 
 from .config import THRESHOLD
+from .notify import notify_run_failed, notify_run_result
 from .pipeline import run_pipeline
 
 MAX_TOP_JOBS = 5
@@ -63,10 +64,12 @@ def run_scheduled() -> None:
         result = run_pipeline()
     except Exception as exc:
         print(f"ERROR: scheduled run failed: {exc}")
+        notify_run_failed(exc)
         sys.exit(1)
         return
 
     print(_format_summary(result, timestamp))
+    notify_run_result(result, THRESHOLD)
 
 
 if __name__ == "__main__":

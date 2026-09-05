@@ -1,6 +1,15 @@
+import pytest
 from unittest.mock import patch
 
 import jobscraper.schedule as schedule
+
+
+@pytest.fixture(autouse=True)
+def _no_notifications(monkeypatch):
+    # run_scheduled() pushes an ntfy.sh notification on success and failure;
+    # keep unit tests offline (the developer's real .env may set NTFY_TOPIC).
+    monkeypatch.setattr(schedule, "notify_run_result", lambda result, threshold: None)
+    monkeypatch.setattr(schedule, "notify_run_failed", lambda exc: None)
 
 
 def test_run_scheduled_prints_summary_on_success(capsys):
@@ -49,3 +58,29 @@ def test_run_scheduled_exits_1_on_pipeline_failure(capsys):
     out = capsys.readouterr().out
     assert "ERROR" in out
     assert "boom" in out
+
+
+def test_run_scheduled_notifies_on_success(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(
+        schedule, "notify_run_result",
+        lambda result, threshold: sent.update(result=result, threshold=threshold))
+    mock_result = {"raw_total": 3, "new_count": 1, "above_threshold": 1, "top_jobs": []}
+
+    with patch.object(schedule, "run_pipeline", return_value=mock_result):
+        schedule.run_scheduled()
+
+    assert sent["result"] is mock_result
+    assert sent["threshold"] == schedule.THRESHOLD
+
+
+def test_run_scheduled_notifies_on_failure(monkeypatch):
+    failed = []
+    monkeypatch.setattr(schedule, "notify_run_failed", lambda exc: failed.append(exc))
+
+    with patch.object(schedule, "run_pipeline", side_effect=RuntimeError("boom")), \
+         patch("sys.exit"):
+        schedule.run_scheduled()
+
+    assert isinstance(failed[0], RuntimeError)
+    assert "boom" in str(failed[0])
