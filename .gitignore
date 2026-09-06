@@ -7,3 +7,7 @@ resume.md
 *.pdf
 resume a.md
 .codegraph/
+
+# internal handoff notes (local only, not for the public repo)
+RESEARCH.md
+UPGRADE_PLAN.md
