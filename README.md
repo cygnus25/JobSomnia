@@ -27,6 +27,10 @@ resume.md
    |                     Jobs run through in batches of 10; each batch is
    |                     persisted to output/jobs.db the moment it lands,
    |                     so a killed run resumes instead of re-billing.
+   |                     Transient gateway errors (429/502/503/504) retry
+   |                     with backoff, and inputs the model omits from a
+   |                     batch still count as attempted, so a resumed run
+   |                     never re-bills them.
    v
 output/jobs.json (generated export of the DB)
 ```
@@ -109,7 +113,7 @@ The script captures `python -m jobscraper.schedule` output; the agent turns it i
 pytest
 ```
 
-111 tests. The LLM, Firecrawl, and the job-board APIs are all mocked, so the suite passes offline and never flakes.
+115 tests. The LLM, Firecrawl, and the job-board APIs are all mocked, so the suite passes offline and never flakes.
 
 ## Project structure
 
